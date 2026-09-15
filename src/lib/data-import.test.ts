@@ -14,8 +14,8 @@ describe("floor import", () => {
 
     assert.deepEqual(result, {
       rows: [
-        { externalId: "floor-37", name: "בניין A / קומה 37", number: 38 },
-        { externalId: "preferred-id", name: "קומת קרקע", number: 1 },
+        { rowNumber: 2, externalId: "floor-37", name: "בניין A / קומה 37", number: 38 },
+        { rowNumber: 3, externalId: "preferred-id", name: "קומת קרקע", number: 1 },
       ],
     });
   });
@@ -32,7 +32,7 @@ describe("floor import", () => {
       "floors.csv",
     );
     assert.deepEqual(result, {
-      rows: [{ externalId: "fl-1", name: "Floor 1", number: 1 }],
+      rows: [{ rowNumber: 2, externalId: "fl-1", name: "Floor 1", number: 1 }],
     });
   });
 });

@@ -1238,6 +1238,7 @@ export const en = {
     equipmentUploadedMixed:
       "Added {create} new equipment items, updated {update}.",
     equipmentUploadEmpty: "No equipment rows found in the file.",
+    equipmentUploadFailed: "The equipment could not be imported.",
     equipmentUploadInvalid:
       "Could not read this file. Download the CSV or Excel template and try again.",
     equipmentUploadInvalidRow:

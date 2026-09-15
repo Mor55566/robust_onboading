@@ -1233,6 +1233,7 @@ export const he: Dictionary = {
     equipmentUploadedMixed:
       "נוספו {create} פריטי ציוד חדשים, עודכנו {update}.",
     equipmentUploadEmpty: "לא נמצאו שורות ציוד בקובץ.",
+    equipmentUploadFailed: "לא ניתן לייבא את הציוד.",
     equipmentUploadInvalid:
       "לא ניתן לקרוא את הקובץ. הורידו את תבנית ה-CSV או ה-Excel ונסו שוב.",
     equipmentUploadInvalidRow:

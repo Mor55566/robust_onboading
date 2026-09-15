@@ -393,11 +393,12 @@ export async function importEquipmentAction(
   }>;
   created?: number;
   updated?: number;
+  skipped?: number;
   preview?: Array<{
     key: string;
     label: string;
     detail: string;
-    action: "create" | "update" | "skip";
+    action: "create" | "update" | "skip" | "error";
   }>;
 }> {
   const ctx = await requireAdminUser();
@@ -525,6 +526,15 @@ export async function importEquipmentAction(
     warrantyExpirationDate: string | null;
   };
 
+  // Rows that fail to resolve (unknown building, missing floor/area, bad
+  // field, ...) are skipped rather than aborting the whole import — the
+  // client shows them as red "won't upload" preview rows and the admin
+  // confirms before the rest goes through.
+  const rowIssues: { rowNumber: number; message: string }[] = [];
+  const rowNames = new Map(
+    parsed.data.map((row, index) => [row.rowNumber ?? index + 2, row.name]),
+  );
+
   const resolvedRows: ResolvedRow[] = [];
   for (const [index, row] of parsed.data.entries()) {
     const rowNumber = row.rowNumber ?? index + 2;
@@ -535,19 +545,17 @@ export async function importEquipmentAction(
     if (buildingName) {
       const match = buildingsByName.get(buildingName.toLowerCase());
       if (!match) {
-        return {
-          error: rowError(
-            rowNumber,
-            t(dict.admin.equipmentUploadBuildingNotFound, {
-              name: buildingName,
-            }),
-          ),
-        };
+        rowIssues.push({
+          rowNumber,
+          message: t(dict.admin.equipmentUploadBuildingNotFound, {
+            name: buildingName,
+          }),
+        });
+        continue;
       }
       if (!(await userCanAccessBuilding(ctx.user, match.id))) {
-        return {
-          error: rowError(rowNumber, ctx.dict.errors.buildingNotAllowed),
-        };
+        rowIssues.push({ rowNumber, message: ctx.dict.errors.buildingNotAllowed });
+        continue;
       }
       buildingId = match.id;
       resolvedBuildingName = match.name;
@@ -556,27 +564,24 @@ export async function importEquipmentAction(
         (building) => building.id === fallbackBuildingId,
       );
       if (!fallback) {
-        return {
-          error: rowError(rowNumber, ctx.dict.errors.buildingNotAllowed),
-        };
+        rowIssues.push({ rowNumber, message: ctx.dict.errors.buildingNotAllowed });
+        continue;
       }
       buildingId = fallback.id;
       resolvedBuildingName = fallback.name;
     } else {
-      return {
-        error: rowError(
-          rowNumber,
-          ctx.dict.admin.equipmentUploadBuildingRequired,
-        ),
-      };
+      rowIssues.push({
+        rowNumber,
+        message: ctx.dict.admin.equipmentUploadBuildingRequired,
+      });
+      continue;
     }
 
     const typeRaw = row.equipmentType?.trim() ?? "";
     const equipmentType = resolveEquipmentTypeId(equipmentTypes, typeRaw);
     if (typeRaw && !equipmentType) {
-      return {
-        error: rowError(rowNumber, ctx.dict.errors.selectEquipmentType),
-      };
+      rowIssues.push({ rowNumber, message: ctx.dict.errors.selectEquipmentType });
+      continue;
     }
 
     const advanced = parseEquipmentAdvancedFields({
@@ -591,7 +596,8 @@ export async function importEquipmentAction(
       warranty_expiration_date: row.warrantyExpirationDate,
     });
     if ("error" in advanced) {
-      return { error: rowError(rowNumber, dict.errors.invalidInput) };
+      rowIssues.push({ rowNumber, message: dict.errors.invalidInput });
+      continue;
     }
 
     resolvedRows.push({
@@ -670,6 +676,8 @@ export async function importEquipmentAction(
   type PlannedOp = {
     action: "create" | "update" | "skip";
     id: string;
+    rowNumber: number;
+    areaName: string;
     name: string;
     floorId: string | null;
     areaId: string | null;
@@ -720,6 +728,8 @@ export async function importEquipmentAction(
       planned.push({
         action: nameChanged ? "update" : "skip",
         id: existingByExternalId.id,
+        rowNumber: row.rowNumber,
+        areaName: row.areaName,
         name: row.name,
         floorId: existingByExternalId.floor_id,
         areaId: existingByExternalId.area_id,
@@ -766,9 +776,11 @@ export async function importEquipmentAction(
       row.name,
     );
     if (!location.ok) {
-      return {
-        error: rowError(row.rowNumber, formatLocationError(location.message)),
-      };
+      rowIssues.push({
+        rowNumber: row.rowNumber,
+        message: formatLocationError(location.message),
+      });
+      continue;
     }
 
     const floorId = location.floorId;
@@ -790,6 +802,8 @@ export async function importEquipmentAction(
       planned.push({
         action: "update",
         id: existing.id,
+        rowNumber: row.rowNumber,
+        areaName: row.areaName,
         name: row.name,
         floorId,
         areaId,
@@ -826,6 +840,8 @@ export async function importEquipmentAction(
       planned.push({
         action: "create",
         id,
+        rowNumber: row.rowNumber,
+        areaName: row.areaName,
         name: row.name,
         floorId,
         areaId,
@@ -860,23 +876,36 @@ export async function importEquipmentAction(
     }
   }
 
-  const preview = planned.map((item, index) => ({
-    key: `equipment-${item.id}-${index}`,
-    label: item.name,
-    detail:
-      item.action === "update" && item.previousName
-        ? t(dict.admin.equipmentUploadPreviewChangeName, {
-            from: item.previousName,
-            to: item.name,
-          })
-        : [item.buildingName, resolvedRows[index]?.areaName]
-            .filter(Boolean)
-            .join(" · "),
-    action: item.action,
-  }));
+  const preview: Array<{
+    key: string;
+    label: string;
+    detail: string;
+    action: "create" | "update" | "skip" | "error";
+  }> = [
+    ...planned.map((item, index) => ({
+      key: `equipment-${item.id}-${index}`,
+      label: item.name,
+      detail:
+        item.action === "update" && item.previousName
+          ? t(dict.admin.equipmentUploadPreviewChangeName, {
+              from: item.previousName,
+              to: item.name,
+            })
+          : [item.buildingName, item.areaName].filter(Boolean).join(" · "),
+      action: item.action as "create" | "update" | "skip",
+    })),
+    // Rows that failed to resolve (unknown building, missing floor/area, ...)
+    // — will NOT be uploaded. Always shown to the user, never silently dropped.
+    ...rowIssues.map((issue) => ({
+      key: `equipment-error-${issue.rowNumber}`,
+      label: rowNames.get(issue.rowNumber) || `#${issue.rowNumber}`,
+      detail: rowError(issue.rowNumber, issue.message),
+      action: "error" as const,
+    })),
+  ];
 
   if (options?.previewOnly) {
-    return { preview };
+    return { preview, skipped: rowIssues.length };
   }
 
   if (planned.length === 0) {
@@ -885,6 +914,7 @@ export async function importEquipmentAction(
       equipment: [],
       created: 0,
       updated: 0,
+      skipped: rowIssues.length,
     };
   }
 
@@ -895,6 +925,7 @@ export async function importEquipmentAction(
       equipment: [],
       created: 0,
       updated: 0,
+      skipped: rowIssues.length,
     };
   }
   const queries = importedItems.map((item) => {
@@ -990,7 +1021,19 @@ export async function importEquipmentAction(
     `;
   });
 
-  const results = await sql.transaction(queries);
+  let results;
+  try {
+    results = await sql.transaction(queries);
+  } catch (error) {
+    console.error("importEquipmentAction failed:", error);
+    const dbError = error as { message?: string; detail?: string };
+    const detail = dbError.detail || dbError.message;
+    return {
+      error: detail
+        ? `${dict.admin.equipmentUploadFailed} (${detail})`
+        : dict.admin.equipmentUploadFailed,
+    };
+  }
   const equipment = results.flat().map((row, index) => {
     const plan = planned[index];
     return {
@@ -1033,5 +1076,6 @@ export async function importEquipmentAction(
     equipment,
     created,
     updated,
+    skipped: rowIssues.length,
   };
 }

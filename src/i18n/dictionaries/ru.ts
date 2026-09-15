@@ -1241,6 +1241,7 @@ export const ru: Dictionary = {
     equipmentUploadedMixed:
       "Добавлено новых единиц оборудования: {create}, обновлено: {update}.",
     equipmentUploadEmpty: "В файле не найдено строк с оборудованием.",
+    equipmentUploadFailed: "Не удалось импортировать оборудование.",
     equipmentUploadInvalid:
       "Не удалось прочитать файл. Скачайте шаблон CSV или Excel и попробуйте снова.",
     equipmentUploadInvalidRow:

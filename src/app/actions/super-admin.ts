@@ -234,16 +234,15 @@ export async function importAreasForSuperAdminAction(rows: AreaImportRow[]): Pro
   );
   const inferredName = explicitNames.size === 1 ? [...explicitNames][0]! : null;
   const grouped = new Map<string, AreaImportRow[]>();
+  let skipped = 0;
 
   for (const row of rows) {
-    const buildingName = row.building?.trim() || inferredName;
     const matches = buildingsForAreaRow(row, inferredName, byName, buildings);
     if (matches.length !== 1) {
-      return {
-        error: t(dict.superAdmin.areaBuildingNotFound, {
-          name: buildingName || row.name,
-        }),
-      };
+      // Already surfaced (and confirmed by the user) as a red row in the
+      // preview step — skip it here rather than aborting the whole import.
+      skipped += 1;
+      continue;
     }
     const buildingId = matches[0]!.id;
     grouped.set(buildingId, [...(grouped.get(buildingId) ?? []), row]);
@@ -251,7 +250,6 @@ export async function importAreasForSuperAdminAction(rows: AreaImportRow[]): Pro
 
   let created = 0;
   let updated = 0;
-  let skipped = 0;
   for (const [buildingId, buildingRows] of grouped) {
     const result = await importAreasAction(buildingId, buildingRows, {
       skipExisting: true,
@@ -306,16 +304,26 @@ export async function previewAreasForSuperAdminAction(
   );
   const inferredName = explicitNames.size === 1 ? [...explicitNames][0]! : null;
   const grouped = new Map<string, { building: { id: string; name: string }; rows: AreaImportRow[] }>();
+  const previewRows: Array<{
+    key: string;
+    label: string;
+    detail: string;
+    action: "create" | "update" | "skip" | "error";
+  }> = [];
 
   for (const row of rows) {
     const buildingName = row.building?.trim() || inferredName;
     const matches = buildingsForAreaRow(row, inferredName, byName, buildings);
     if (matches.length !== 1) {
-      return {
-        error: t(dict.superAdmin.areaBuildingNotFound, {
+      previewRows.push({
+        key: `area-building-error-${row.rowNumber}`,
+        label: row.name || `#${row.rowNumber}`,
+        detail: t(dict.superAdmin.areaBuildingNotFound, {
           name: buildingName || row.name,
         }),
-      };
+        action: "error",
+      });
+      continue;
     }
     const building = matches[0]!;
     const group = grouped.get(building.id) ?? { building, rows: [] };
@@ -323,7 +331,6 @@ export async function previewAreasForSuperAdminAction(
     grouped.set(building.id, group);
   }
 
-  const previewRows = [];
   for (const { building, rows: buildingRows } of grouped.values()) {
     const buildingAreas = areas.filter((row) => row.building_id === building.id);
     const existingByExternalId = new Map(
