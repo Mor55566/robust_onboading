@@ -11,6 +11,7 @@ import {
   DataUploadModal,
   type ImportPreviewRow,
 } from "@/components/data-upload-modal";
+import { ScheduledMissionsImportGuideModal } from "@/components/scheduled-missions-import-guide-modal";
 import { UploadCard, UploadMessage } from "@/components/upload-card";
 import type { Dictionary } from "@/i18n/dictionaries/en";
 import { t } from "@/i18n/t";
@@ -41,6 +42,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     refreshUploadStatus,
   } = useComplexContext();
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [message, setMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -188,6 +190,8 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
         onOpen={() => setUploadOpen(true)}
         disabled={!complexId}
         done={complexId ? uploadStatus?.scheduledMissions : undefined}
+        guideLabel={dict.superAdmin.scheduledMissionsImportGuideButton}
+        onGuide={() => setGuideOpen(true)}
       />
 
       <DataUploadModal
@@ -232,6 +236,12 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
         preview={previewRows}
         onClose={() => setUploadOpen(false)}
         onImport={handleImport}
+      />
+
+      <ScheduledMissionsImportGuideModal
+        open={guideOpen}
+        dict={dict}
+        onClose={() => setGuideOpen(false)}
       />
 
       <UploadMessage message={historyMessage} />

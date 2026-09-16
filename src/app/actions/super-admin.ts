@@ -31,6 +31,7 @@ import {
 } from "@/lib/area-import";
 import {
   planCategoriesImport,
+  type CategoryImportPlanItem,
   type CategoryImportRow,
 } from "@/lib/category-import";
 import {
@@ -1228,6 +1229,30 @@ function queueAttachmentInserts(
   `);
 }
 
+class RowImportError extends Error {
+  constructor(
+    public readonly rowNumber: number | null,
+    public readonly originalError: unknown,
+  ) {
+    super(`Row import failed${rowNumber != null ? ` at row ${rowNumber}` : ""}`);
+  }
+}
+
+// Postgres errors (via @neondatabase/serverless's NeonDbError) carry a
+// human-readable `detail` alongside the raw `message` — surface both so a
+// failed import row is actionable without digging through server logs.
+function describeDbError(error: unknown): string {
+  if (error && typeof error === "object") {
+    const detail = "detail" in error ? (error as { detail?: unknown }).detail : undefined;
+    const message = "message" in error ? (error as { message?: unknown }).message : undefined;
+    const parts = [message, detail].filter(
+      (part): part is string => typeof part === "string" && part.length > 0,
+    );
+    if (parts.length > 0) return parts.join(" — ");
+  }
+  return String(error);
+}
+
 export async function importTasksAction(
   rows: TaskImportRow[],
 ): Promise<{
@@ -1464,6 +1489,7 @@ export async function importTasksAction(
   }
 
   const queries: ReturnType<typeof sql>[] = [];
+  const rowBoundaries: { rowNumber: number; start: number; end: number }[] = [];
   let created = 0;
   let updated = 0;
   const CHUNK = 40;
@@ -1471,13 +1497,36 @@ export async function importTasksAction(
   async function flushQueries() {
     if (queries.length === 0) return;
     const batch = queries.splice(0, queries.length);
+    const boundaries = rowBoundaries.splice(0, rowBoundaries.length);
     for (let i = 0; i < batch.length; i += CHUNK) {
-      await sql.transaction(batch.slice(i, i + CHUNK));
+      const end = Math.min(i + CHUNK, batch.length);
+      try {
+        await sql.transaction(batch.slice(i, end));
+      } catch (error) {
+        // Narrow down which row in this chunk caused the failure by
+        // replaying each row's queries on their own — the failed chunk
+        // transaction rolled back, so DB state is unchanged and the
+        // replay reproduces the same error on the same row.
+        const rowsInChunk = boundaries.filter(
+          (b) => b.start < end && b.end > i,
+        );
+        let failingRowNumber = rowsInChunk[0]?.rowNumber ?? null;
+        for (const boundary of rowsInChunk) {
+          try {
+            await sql.transaction(batch.slice(boundary.start, boundary.end));
+          } catch {
+            failingRowNumber = boundary.rowNumber;
+            break;
+          }
+        }
+        throw new RowImportError(failingRowNumber, error);
+      }
     }
   }
 
   try {
     for (const row of resolved.rows) {
+      const rowQueryStart = queries.length;
       const existingTaskId = row.callNumber
         ? (existingByCallNumber.get(row.callNumber.trim()) ?? null)
         : null;
@@ -1638,6 +1687,12 @@ export async function importTasksAction(
         }
       }
 
+      rowBoundaries.push({
+        rowNumber: row.rowNumber,
+        start: rowQueryStart,
+        end: queries.length,
+      });
+
       if (queries.length >= CHUNK) {
         await flushQueries();
       }
@@ -1648,6 +1703,23 @@ export async function importTasksAction(
     await flushQueries().catch(() => undefined);
     if (error instanceof CloudinaryConfigError) {
       return { error: dict.errors.cloudinaryNotConfigured, created, updated };
+    }
+    if (error instanceof RowImportError) {
+      console.error(
+        `importTasksAction failed at row ${error.rowNumber}:`,
+        error.originalError,
+      );
+      return {
+        error:
+          error.rowNumber != null
+            ? t(dict.superAdmin.uploadRowError, {
+                row: error.rowNumber,
+                message: describeDbError(error.originalError),
+              })
+            : dict.admin.uploadImportFailed,
+        created,
+        updated,
+      };
     }
     if (error instanceof CloudinaryUploadError) {
       if (/missing permissions|actions=\["create"\]/i.test(error.message)) {
@@ -1679,6 +1751,16 @@ export async function importTasksAction(
   };
 }
 
+class CategoryImportRowError extends Error {
+  constructor(
+    public readonly rowNumber: number,
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "CategoryImportRowError";
+  }
+}
+
 export async function importCategoriesAction(
   complexId: string,
   rows: CategoryImportRow[],
@@ -1701,13 +1783,11 @@ export async function importCategoriesAction(
   }
 
   try {
-    // Visitt allows duplicate category names under different parents.
-    await sql`ALTER TABLE public.task_categories DROP CONSTRAINT IF EXISTS task_categories_name_key`;
-    await sql`
-      CREATE UNIQUE INDEX IF NOT EXISTS task_categories_external_id_uidx
-      ON public.task_categories (external_id)
-      WHERE external_id IS NOT NULL
-    `;
+    // Schema prerequisites (dropping the old name-uniqueness constraint and
+    // scoping external_id uniqueness to complex_id) require table ownership
+    // that the app's own DB role (app_user) doesn't have, so they can't run
+    // here — see db/task_categories_scope_external_id_unique_per_complex.sql,
+    // which must be applied once by a role that owns public.task_categories.
 
     const existing = await sql`
       SELECT id, name, external_id, parent_category_id
@@ -1734,8 +1814,8 @@ export async function importCategoriesAction(
     }
 
     // Pass 1: upsert name + external_id (parents resolved in pass 2).
-    const upsertQueries = plan.items.map((item) =>
-      item.action === "update"
+    function buildUpsertQuery(item: CategoryImportPlanItem) {
+      return item.action === "update"
         ? sql`
             UPDATE task_categories
             SET
@@ -1746,19 +1826,33 @@ export async function importCategoriesAction(
         : sql`
             INSERT INTO task_categories (id, name, external_id, complex_id)
             VALUES (${item.id}, ${item.name}, ${item.externalId}, ${parsedComplexId.data})
-          `,
-    );
+          `;
+    }
 
     const CHUNK = 40;
-    for (let i = 0; i < upsertQueries.length; i += CHUNK) {
-      await sql.transaction(upsertQueries.slice(i, i + CHUNK));
+    for (let i = 0; i < plan.items.length; i += CHUNK) {
+      const chunkItems = plan.items.slice(i, i + CHUNK);
+      try {
+        await sql.transaction(chunkItems.map(buildUpsertQuery));
+      } catch (chunkError) {
+        // Isolate which row in the failed chunk caused it.
+        for (const item of chunkItems) {
+          try {
+            await buildUpsertQuery(item);
+          } catch (rowError) {
+            throw new CategoryImportRowError(item.rowNumber, rowError);
+          }
+        }
+        throw chunkError;
+      }
     }
 
     // Map external_id → uuid after upsert (includes pre-existing + this file).
+    // Scoped to this complex: external_id is only unique within a complex.
     const allCategories = await sql`
       SELECT id, external_id
       FROM task_categories
-      WHERE external_id IS NOT NULL
+      WHERE complex_id = ${parsedComplexId.data} AND external_id IS NOT NULL
     `;
     const idByExternal = new Map(
       allCategories.map((row) => [
@@ -1769,14 +1863,18 @@ export async function importCategoriesAction(
 
     // Pass 2: set parent_category_id from CSV parent category id → our uuid.
     // Every imported row with a parent is guaranteed to resolve (plan filtered).
-    const parentQueries = [];
+    function buildParentQuery(item: CategoryImportPlanItem, parentId: string | null) {
+      return sql`
+        UPDATE task_categories
+        SET parent_category_id = ${parentId}
+        WHERE id = ${item.id}
+      `;
+    }
+
+    const parentSteps: { item: CategoryImportPlanItem; parentId: string | null }[] = [];
     for (const item of plan.items) {
       if (!item.parentExternalId) {
-        parentQueries.push(sql`
-          UPDATE task_categories
-          SET parent_category_id = NULL
-          WHERE id = ${item.id}
-        `);
+        parentSteps.push({ item, parentId: null });
         continue;
       }
       const parentId = idByExternal.get(item.parentExternalId) ?? null;
@@ -1784,15 +1882,23 @@ export async function importCategoriesAction(
         // Should not happen after planning; skip rather than orphan.
         continue;
       }
-      parentQueries.push(sql`
-        UPDATE task_categories
-        SET parent_category_id = ${parentId}
-        WHERE id = ${item.id}
-      `);
+      parentSteps.push({ item, parentId });
     }
 
-    for (let i = 0; i < parentQueries.length; i += CHUNK) {
-      await sql.transaction(parentQueries.slice(i, i + CHUNK));
+    for (let i = 0; i < parentSteps.length; i += CHUNK) {
+      const chunkSteps = parentSteps.slice(i, i + CHUNK);
+      try {
+        await sql.transaction(chunkSteps.map((step) => buildParentQuery(step.item, step.parentId)));
+      } catch (chunkError) {
+        for (const step of chunkSteps) {
+          try {
+            await buildParentQuery(step.item, step.parentId);
+          } catch (rowError) {
+            throw new CategoryImportRowError(step.item.rowNumber, rowError);
+          }
+        }
+        throw chunkError;
+      }
     }
 
     const created = plan.items.filter((item) => item.action === "create").length;
@@ -1813,6 +1919,14 @@ export async function importCategoriesAction(
     };
   } catch (error) {
     console.error("importCategoriesAction failed:", error);
+    if (error instanceof CategoryImportRowError) {
+      return {
+        error: t(dict.superAdmin.categoriesImportRowFailed, {
+          row: error.rowNumber,
+          message: error.message,
+        }),
+      };
+    }
     const detail =
       error &&
       typeof error === "object" &&
@@ -1820,10 +1934,9 @@ export async function importCategoriesAction(
       typeof (error as { detail?: unknown }).detail === "string"
         ? (error as { detail: string }).detail
         : null;
+    const message = detail ?? (error instanceof Error ? error.message : String(error));
     return {
-      error: detail
-        ? `${dict.superAdmin.categoriesUploadFailed}: ${detail}`
-        : dict.superAdmin.categoriesUploadFailed,
+      error: `${dict.superAdmin.categoriesUploadFailed}: ${message}`,
     };
   }
 }

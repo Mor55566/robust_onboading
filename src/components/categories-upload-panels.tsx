@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { importCategoriesAction } from "@/app/actions/super-admin";
+import { CategoriesImportGuideModal } from "@/components/categories-import-guide-modal";
 import { useComplexContext } from "@/components/complex-context";
 import {
   DataUploadModal,
@@ -17,9 +18,17 @@ import {
   type CategoryImportRow,
 } from "@/lib/category-import";
 
-export function CategoriesUploadPanels({ dict }: { dict: Dictionary }) {
+export function CategoriesUploadPanels({
+  dict,
+  stepNumber,
+}: {
+  dict: Dictionary;
+  /** Shows "N. " before the title, to mark this panel as one step in an ordered flow. */
+  stepNumber?: number;
+}) {
   const { complexId, selectedComplex, uploadStatus, refreshUploadStatus } = useComplexContext();
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [message, setMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -78,6 +87,7 @@ export function CategoriesUploadPanels({ dict }: { dict: Dictionary }) {
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-semibold">
+                {stepNumber ? `${stepNumber}. ` : ""}
                 {dict.superAdmin.categoriesUploadTitle}
               </h2>
               <UploadStatusBadge done={complexId ? uploadStatus?.categories : undefined} />
@@ -85,6 +95,13 @@ export function CategoriesUploadPanels({ dict }: { dict: Dictionary }) {
             <p className="text-sm text-[var(--text-muted)]">
               {dict.superAdmin.categoriesUploadSubtitle}
             </p>
+            <button
+              type="button"
+              className="text-sm font-medium text-[var(--brand)] hover:text-[var(--brand-hover)] hover:underline"
+              onClick={() => setGuideOpen(true)}
+            >
+              {dict.superAdmin.categoriesImportGuideButton}
+            </button>
           </div>
           <button
             type="button"
@@ -135,6 +152,12 @@ export function CategoriesUploadPanels({ dict }: { dict: Dictionary }) {
         preview={previewRows}
         onClose={() => setUploadOpen(false)}
         onImport={handleImport}
+      />
+
+      <CategoriesImportGuideModal
+        open={guideOpen}
+        dict={dict}
+        onClose={() => setGuideOpen(false)}
       />
     </div>
   );

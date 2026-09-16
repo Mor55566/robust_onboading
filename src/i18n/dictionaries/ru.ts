@@ -32,6 +32,7 @@ export const ru: Dictionary = {
     resizeColumn: "Изменить ширину столбца",
     noResults: "Ничего не найдено.",
     tableSearchPlaceholder: "Поиск…",
+    copy: "Копировать",
     copied: "Скопировано",
     rowsSelected: "выбрано",
   },
@@ -145,6 +146,26 @@ export const ru: Dictionary = {
     categoriesUploadAllSkipped:
       "Категории не импортированы. {skipped} строк пропущено, так как родитель не найден.",
     categoriesUploadFailed: "Не удалось импортировать категории",
+    categoriesImportRowFailed: "Ошибка в строке {row}: {message}",
+    categoriesImportGuideButton: "Инструкция",
+    categoriesImportGuideTitle: "Экспорт категорий из Visitt",
+    categoriesImportGuideIntro:
+      "Выполните следующие шаги, чтобы экспортировать список категорий из Visitt в файл CSV, а затем загрузите его выше.",
+    categoriesImportGuideStep1Title: "Откройте список категорий заявки",
+    categoriesImportGuideStep1Body:
+      "Войдите в Visitt и откройте страницу «Заявки» (קריאות). Нажмите зелёную кнопку «+ Новая заявка» (פתח קריאה) в левом верхнем углу — откроется форма новой заявки вместе со списком категорий.",
+    categoriesImportGuideStep2Title: "Откройте инструменты разработчика (DevTools)",
+    categoriesImportGuideStep2Body:
+      "Щёлкните правой кнопкой мыши в любом месте страницы и выберите «Просмотреть код» / «Inspect» (в некоторых браузерах «Inspect Element»). Можно также использовать сочетание клавиш: Cmd+Option+I на Mac или F12 / Ctrl+Shift+I на Windows. В открывшейся панели выберите вкладку «Console».",
+    categoriesImportGuideStep3Title: "Разрешите вставку",
+    categoriesImportGuideStep3Body:
+      "На вкладке Console введите allow pasting и нажмите Enter. Это защитный шаг браузера, который разрешает вставку кода в консоль — без него следующий шаг будет заблокирован.",
+    categoriesImportGuideStep4Title: "Вставьте и запустите скрипт",
+    categoriesImportGuideStep4Body:
+      "Скопируйте скрипт ниже, вставьте его в консоль и нажмите Enter. Файл categories.csv со всеми категориями скачается автоматически — загрузите этот файл выше.",
+    categoriesImportGuideScriptNote:
+      "Этот скрипт также сохранён в проекте по пути scripts/copy_task_categories.js.",
+    categoriesImportGuideCopyScript: "Скопировать скрипт",
     scheduledMissionsSubtitle:
       "Загрузка запланированных задач из шаблона CSV или Excel",
     scheduledMissionsUploadTitle: "Загрузка запланированных задач",
@@ -160,6 +181,25 @@ export const ru: Dictionary = {
     scheduledMissionsUploadSuccess: "Импортировано запланированных задач: {count}",
     scheduledMissionsUploadSuccessDetailed:
       "Импортировано новых запланированных задач: {created}, обновлено: {updated}",
+    scheduledMissionsImportGuideButton: "Инструкция",
+    scheduledMissionsImportGuideTitle: "Экспорт запланированных задач из Visitt",
+    scheduledMissionsImportGuideIntro:
+      "Выполните следующие шаги, чтобы экспортировать чек-листы запланированных задач из Visitt в файл CSV, а затем загрузите его выше.",
+    scheduledMissionsImportGuideStep1Title: "Откройте страницу заданий",
+    scheduledMissionsImportGuideStep1Body:
+      "Войдите в Visitt и откройте страницу «Задания» (משימות), чтобы была видна таблица запланированных задач.",
+    scheduledMissionsImportGuideStep2Title: "Откройте инструменты разработчика (DevTools)",
+    scheduledMissionsImportGuideStep2Body:
+      "Щёлкните правой кнопкой мыши в любом месте страницы и выберите «Просмотреть код» / «Inspect» (в некоторых браузерах «Inspect Element»). Можно также использовать сочетание клавиш: Cmd+Option+I на Mac или F12 / Ctrl+Shift+I на Windows. В открывшейся панели выберите вкладку «Console».",
+    scheduledMissionsImportGuideStep3Title: "Разрешите вставку",
+    scheduledMissionsImportGuideStep3Body:
+      "На вкладке Console введите allow pasting и нажмите Enter. Это защитный шаг браузера, который разрешает вставку кода в консоль — без него следующий шаг будет заблокирован.",
+    scheduledMissionsImportGuideStep4Title: "Вставьте и запустите скрипт",
+    scheduledMissionsImportGuideStep4Body:
+      "Скопируйте скрипт ниже, вставьте его в консоль и нажмите Enter. Появится запрос, сколько задач экспортировать — скрипт откроет каждую, считает её чек-лист и снова закроет, ничего не изменяя. Файл CSV со всеми чек-листами скачается автоматически — загрузите этот файл выше.",
+    scheduledMissionsImportGuideScriptNote:
+      "Этот скрипт также сохранён в проекте по пути scripts/copy_scheduled_missions.js.",
+    scheduledMissionsImportGuideCopyScript: "Скопировать скрипт",
     missionHistoryUploadButton: "Загрузить историю заданий",
     missionHistoryUploadTitle: "Загрузить историю заданий",
     missionHistoryUploadSubtitle:
@@ -1049,7 +1089,6 @@ export const ru: Dictionary = {
     tabSuperAdmin: "Заявки",
     tabBuilding: "Здание",
     tabScheduledMissions: "Запланированные задачи",
-    tabCategories: "Категории",
     tabFiles: "Документы",
     tabResidents: "Жильцы",
     tabUsers: "Пользователи",

@@ -32,6 +32,7 @@ export const he: Dictionary = {
     resizeColumn: "שינוי רוחב עמודה",
     noResults: "לא נמצאו תוצאות.",
     tableSearchPlaceholder: "חיפוש…",
+    copy: "העתקה",
     copied: "הועתק",
     rowsSelected: "נבחרו",
   },
@@ -145,6 +146,26 @@ export const he: Dictionary = {
     categoriesUploadAllSkipped:
       "לא יובאו קטגוריות. {skipped} שורות דולגו כי ההורה לא נמצא.",
     categoriesUploadFailed: "לא ניתן לייבא קטגוריות",
+    categoriesImportRowFailed: "שגיאה בשורה {row}: {message}",
+    categoriesImportGuideButton: "מדריך",
+    categoriesImportGuideTitle: "ייצוא קטגוריות מ-Visitt",
+    categoriesImportGuideIntro:
+      "בצעו את הצעדים הבאים כדי לייצא את רשימת הקטגוריות מ-Visitt לקובץ CSV, ולאחר מכן להעלות אותו למעלה.",
+    categoriesImportGuideStep1Title: "פתחו את רשימת הקטגוריות של קריאת שירות",
+    categoriesImportGuideStep1Body:
+      "היכנסו ל-Visitt ופתחו את עמוד “קריאות”. לחצו על הכפתור הירוק “+ פתח קריאה” בפינה השמאלית העליונה — כך ייפתח טופס קריאה חדשה יחד עם רשימת הקטגוריות.",
+    categoriesImportGuideStep2Title: "פתחו את כלי הפיתוח של הדפדפן (DevTools)",
+    categoriesImportGuideStep2Body:
+      "לחצו קליק ימני בכל מקום בדף ובחרו “בדיקה” או “Inspect” מהתפריט (בחלק מהדפדפנים “בדיקת רכיב” / “Inspect Element”). אפשר גם להשתמש בקיצור מקלדת: Cmd+Option+I במק, או F12 / Ctrl+Shift+I בחלונות. בפאנל שנפתח לחצו על הלשונית “Console”.",
+    categoriesImportGuideStep3Title: "אפשרו הדבקה",
+    categoriesImportGuideStep3Body:
+      "בלשונית ה-Console הקלידו את המילים allow pasting ולחצו Enter. זהו צעד הגנה של הדפדפן שפותח אפשרות להדביק קוד — בלעדיו הפעולה הבאה תיחסם.",
+    categoriesImportGuideStep4Title: "הדביקו והריצו את הסקריפט",
+    categoriesImportGuideStep4Body:
+      "העתיקו את הסקריפט שלמטה, הדביקו אותו בלשונית ה-Console ולחצו Enter. קובץ categories.csv עם כל הקטגוריות יורד אוטומטית למחשב — את הקובץ הזה מעלים למעלה.",
+    categoriesImportGuideScriptNote:
+      "הסקריפט שמור גם בפרויקט בנתיב scripts/copy_task_categories.js.",
+    categoriesImportGuideCopyScript: "העתקת הסקריפט",
     scheduledMissionsSubtitle:
       "העלאת משימות מתוזמנות מקובץ CSV או Excel",
     scheduledMissionsUploadTitle: "העלאת משימות מתוזמנות",
@@ -159,6 +180,25 @@ export const he: Dictionary = {
     scheduledMissionsUploadSuccess: "יובאו {count} משימות מתוזמנות",
     scheduledMissionsUploadSuccessDetailed:
       "יובאו {created} משימות מתוזמנות חדשות, עודכנו {updated}",
+    scheduledMissionsImportGuideButton: "מדריך",
+    scheduledMissionsImportGuideTitle: "ייצוא משימות מתוזמנות מ-Visitt",
+    scheduledMissionsImportGuideIntro:
+      "בצעו את הצעדים הבאים כדי לייצא את הצ׳קליסטים של המשימות המתוזמנות מ-Visitt לקובץ CSV, ולאחר מכן להעלות אותו למעלה.",
+    scheduledMissionsImportGuideStep1Title: "פתחו את עמוד המשימות",
+    scheduledMissionsImportGuideStep1Body:
+      "היכנסו ל-Visitt ופתחו את עמוד “משימות” כך שטבלת המשימות המתוזמנות תהיה גלויה.",
+    scheduledMissionsImportGuideStep2Title: "פתחו את כלי הפיתוח של הדפדפן (DevTools)",
+    scheduledMissionsImportGuideStep2Body:
+      "לחצו קליק ימני בכל מקום בדף ובחרו “בדיקה” או “Inspect” מהתפריט (בחלק מהדפדפנים “בדיקת רכיב” / “Inspect Element”). אפשר גם להשתמש בקיצור מקלדת: Cmd+Option+I במק, או F12 / Ctrl+Shift+I בחלונות. בפאנל שנפתח לחצו על הלשונית “Console”.",
+    scheduledMissionsImportGuideStep3Title: "אפשרו הדבקה",
+    scheduledMissionsImportGuideStep3Body:
+      "בלשונית ה-Console הקלידו את המילים allow pasting ולחצו Enter. זהו צעד הגנה של הדפדפן שפותח אפשרות להדביק קוד — בלעדיו הפעולה הבאה תיחסם.",
+    scheduledMissionsImportGuideStep4Title: "הדביקו והריצו את הסקריפט",
+    scheduledMissionsImportGuideStep4Body:
+      "העתיקו את הסקריפט שלמטה, הדביקו אותו בלשונית ה-Console ולחצו Enter. תופיע שאלה כמה משימות לחלץ — הסקריפט יפתח כל משימה, יקרא את הצ׳קליסט שלה ויסגור אותה בחזרה מבלי לשנות דבר. קובץ CSV עם כל הצ׳קליסטים יורד אוטומטית למחשב — את הקובץ הזה מעלים למעלה.",
+    scheduledMissionsImportGuideScriptNote:
+      "הסקריפט שמור גם בפרויקט בנתיב scripts/copy_scheduled_missions.js.",
+    scheduledMissionsImportGuideCopyScript: "העתקת הסקריפט",
     missionHistoryUploadButton: "העלאת היסטוריית משימות",
     missionHistoryUploadTitle: "העלאת היסטוריית משימות",
     missionHistoryUploadSubtitle:
@@ -1042,7 +1082,6 @@ export const he: Dictionary = {
     tabSuperAdmin: "קריאות",
     tabBuilding: "בניין",
     tabScheduledMissions: "ניהול משימות",
-    tabCategories: "קטגוריות",
     tabFiles: "מסמכים",
     tabResidents: "דיירים",
     tabUsers: "משתמשים",

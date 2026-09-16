@@ -30,6 +30,7 @@ export const en = {
     resizeColumn: "Resize column",
     noResults: "No results found.",
     tableSearchPlaceholder: "Search…",
+    copy: "Copy",
     copied: "Copied",
     rowsSelected: "selected",
   },
@@ -143,6 +144,26 @@ export const en = {
     categoriesUploadAllSkipped:
       "No categories imported. {skipped} rows were skipped because their parent was not found.",
     categoriesUploadFailed: "Could not import categories",
+    categoriesImportRowFailed: "Error on row {row}: {message}",
+    categoriesImportGuideButton: "Guide",
+    categoriesImportGuideTitle: "Export categories from Visitt",
+    categoriesImportGuideIntro:
+      "Follow these steps to export the category list from Visitt as a CSV file, then upload it above.",
+    categoriesImportGuideStep1Title: "Open the work-order categories list",
+    categoriesImportGuideStep1Body:
+      "Sign in to Visitt and open the “Calls” (קריאות) page. Click the green “+ New call” (פתח קריאה) button in the top-left corner — this opens the new-work-order form together with the category list.",
+    categoriesImportGuideStep2Title: "Open the browser DevTools",
+    categoriesImportGuideStep2Body:
+      "Right-click anywhere on the page and choose “Inspect” (in some browsers “Inspect Element”) from the menu. You can also use a keyboard shortcut: Cmd+Option+I on Mac, or F12 / Ctrl+Shift+I on Windows. In the panel that opens, click the “Console” tab.",
+    categoriesImportGuideStep3Title: "Enable pasting",
+    categoriesImportGuideStep3Body:
+      "In the Console tab, type allow pasting and press Enter. This is a browser safety step that unlocks pasting code into the console — without it, the next step will be blocked.",
+    categoriesImportGuideStep4Title: "Paste and run the script",
+    categoriesImportGuideStep4Body:
+      "Copy the script below, paste it into the Console, and press Enter. A categories.csv file with the full category list downloads automatically — upload that file above.",
+    categoriesImportGuideScriptNote:
+      "This script is also saved in the project at scripts/copy_task_categories.js.",
+    categoriesImportGuideCopyScript: "Copy script",
     scheduledMissionsSubtitle:
       "Upload scheduled missions from a CSV or Excel template",
     scheduledMissionsUploadTitle: "Upload scheduled missions",
@@ -158,6 +179,25 @@ export const en = {
     scheduledMissionsUploadSuccess: "Imported {count} scheduled missions",
     scheduledMissionsUploadSuccessDetailed:
       "Imported {created} new scheduled missions, updated {updated}",
+    scheduledMissionsImportGuideButton: "Guide",
+    scheduledMissionsImportGuideTitle: "Export scheduled missions from Visitt",
+    scheduledMissionsImportGuideIntro:
+      "Follow these steps to export the scheduled-mission checklists from Visitt as a CSV file, then upload it above.",
+    scheduledMissionsImportGuideStep1Title: "Open the missions page",
+    scheduledMissionsImportGuideStep1Body:
+      "Sign in to Visitt and open the “Missions” (משימות) page so the missions table is visible.",
+    scheduledMissionsImportGuideStep2Title: "Open the browser DevTools",
+    scheduledMissionsImportGuideStep2Body:
+      "Right-click anywhere on the page and choose “Inspect” (in some browsers “Inspect Element”) from the menu. You can also use a keyboard shortcut: Cmd+Option+I on Mac, or F12 / Ctrl+Shift+I on Windows. In the panel that opens, click the “Console” tab.",
+    scheduledMissionsImportGuideStep3Title: "Enable pasting",
+    scheduledMissionsImportGuideStep3Body:
+      "In the Console tab, type allow pasting and press Enter. This is a browser safety step that unlocks pasting code into the console — without it, the next step will be blocked.",
+    scheduledMissionsImportGuideStep4Title: "Paste and run the script",
+    scheduledMissionsImportGuideStep4Body:
+      "Copy the script below, paste it into the Console, and press Enter. A prompt will ask how many missions to export — the script opens each one, reads its checklist, and closes it again without changing anything. A CSV file with all the checklists downloads automatically — upload that file above.",
+    scheduledMissionsImportGuideScriptNote:
+      "This script is also saved in the project at scripts/copy_scheduled_missions.js.",
+    scheduledMissionsImportGuideCopyScript: "Copy script",
     missionHistoryUploadButton: "Upload mission history",
     missionHistoryUploadTitle: "Upload mission history",
     missionHistoryUploadSubtitle:
@@ -1046,7 +1086,6 @@ export const en = {
     tabSuperAdmin: "Tasks",
     tabBuilding: "Building",
     tabScheduledMissions: "Manage inspections",
-    tabCategories: "Categories",
     tabFiles: "Documents",
     tabResidents: "Residents",
     tabUsers: "Users",

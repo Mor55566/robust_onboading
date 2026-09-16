@@ -9,7 +9,6 @@ export type OnboardingSection =
   | "super-admin"
   | "building"
   | "scheduled-missions"
-  | "categories"
   | "documents"
   | "residents"
   | "users";
@@ -17,7 +16,6 @@ export type OnboardingSection =
 function navItems(dict: Dictionary): { key: OnboardingSection; href: string; label: string }[] {
   return [
     { key: "building", href: "/building", label: dict.profile.tabBuilding },
-    { key: "categories", href: "/categories", label: dict.profile.tabCategories },
     { key: "super-admin", href: "/super-admin", label: dict.profile.tabSuperAdmin },
     { key: "scheduled-missions", href: "/scheduled-missions", label: dict.profile.tabScheduledMissions },
     { key: "documents", href: "/documents", label: dict.profile.tabFiles },

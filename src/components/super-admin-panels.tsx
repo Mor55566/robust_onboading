@@ -9,6 +9,7 @@ import {
   importTasksAction,
   type DeletableTicket,
 } from "@/app/actions/super-admin";
+import { CategoriesUploadPanels } from "@/components/categories-upload-panels";
 import { useComplexContext } from "@/components/complex-context";
 import {
   DataUploadModal,
@@ -130,6 +131,8 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
     <div className="space-y-4">
       <UploadMessage message={message} />
 
+      <CategoriesUploadPanels dict={dict} stepNumber={1} />
+
       <UploadCard
         title={dict.superAdmin.uploadTitle}
         subtitle={dict.superAdmin.uploadSubtitle}
@@ -137,6 +140,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         onOpen={() => setUploadOpen(true)}
         disabled={!complexId}
         done={complexId ? uploadStatus?.tasks : undefined}
+        stepNumber={2}
       />
 
       <UploadCard
@@ -146,6 +150,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         onOpen={() => setAutomationsUploadOpen(true)}
         disabled={!complexId}
         done={complexId ? uploadStatus?.automations : undefined}
+        stepNumber={3}
       />
 
       <section className="surface-card space-y-4 p-5">

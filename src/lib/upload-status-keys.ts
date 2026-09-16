@@ -32,8 +32,7 @@ export function emptyUploadStatus(): UploadStatus {
 // as "done". Tabs not listed here have no per-tab indicator.
 export const SECTION_UPLOAD_KEYS: Record<string, UploadStatusKey[]> = {
   building: ["floors", "areas", "equipment"],
-  categories: ["categories"],
-  "super-admin": ["tasks", "automations"],
+  "super-admin": ["categories", "tasks", "automations"],
   "scheduled-missions": ["scheduledMissions", "missionHistory"],
   documents: ["fileTags", "files", "fileAttachments"],
   residents: ["residents"],
