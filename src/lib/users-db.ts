@@ -1,6 +1,7 @@
 import "server-only";
 
 import { neon } from "@neondatabase/serverless";
+import { withSessionScope } from "@/lib/scoped-sql";
 
 function getUsersDatabaseUrl() {
   const url = process.env.USERS_DATABASE_URL;
@@ -8,7 +9,13 @@ function getUsersDatabaseUrl() {
   return url;
 }
 
-export const usersSql = neon(getUsersDatabaseUrl());
+// Complex-scoped RLS (with_robust_app's db/users_complex_scoped_rls.sql,
+// same database) - this app is only ever used by a real super_admin
+// session (gated by requireSuperAdmin()), which every policy there already
+// bypasses on. NB: this app's own session-context.ts uses its own
+// unwrapped connection for the bootstrap query, same reasoning as
+// with_robust_app's.
+export const usersSql = withSessionScope(neon(getUsersDatabaseUrl()));
 
 export type UserRole =
   | "user"

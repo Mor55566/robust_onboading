@@ -1,6 +1,7 @@
 import "server-only";
 
 import { neon } from "@neondatabase/serverless";
+import { withSessionScope } from "@/lib/scoped-sql";
 
 // New for robust_onboading — with_robust_app has no equivalent yet. The
 // `agent_templates` / `complex_template_seeds` tables (same AGENTS_DATABASE_URL
@@ -16,7 +17,11 @@ function getAgentsDatabaseUrl() {
   return url;
 }
 
-export const agentsSql = neon(getAgentsDatabaseUrl());
+// Complex-scoped RLS (with_robust_app's db/agents_complex_scoped_rls.sql,
+// same database) - this app is only ever used by a real super_admin
+// session (gated by requireSuperAdmin()), which every policy there already
+// bypasses on.
+export const agentsSql = withSessionScope(neon(getAgentsDatabaseUrl()));
 
 export type AgentTemplateRecord = {
   id: string;

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { neon } from "@neondatabase/serverless";
+import { withSessionScope } from "@/lib/scoped-sql";
 
 function getResidentDatabaseUrl() {
   const url = process.env.RESIDENT_DATABASE_URL;
@@ -8,7 +9,11 @@ function getResidentDatabaseUrl() {
   return url;
 }
 
-export const residentSql = neon(getResidentDatabaseUrl());
+// Complex-scoped RLS (with_robust_app's db/resident_complex_scoped_rls.sql,
+// same database) reads app.user_complex_ids/app.user_admin_complex_ids -
+// this app is only ever used by a real super_admin session (gated by
+// requireSuperAdmin()), which every policy there already bypasses on.
+export const residentSql = withSessionScope(neon(getResidentDatabaseUrl()));
 
 export type ResidentRecord = {
   id: string;
