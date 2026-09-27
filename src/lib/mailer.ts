@@ -1,23 +1,7 @@
-import nodemailer from "nodemailer";
+import { sendEmail } from "./email-client";
 import { appendFileSync, mkdirSync } from "fs";
 import { dirname, resolve } from "path";
 import type { Locale } from "@/i18n/config";
-
-function getSmtpConfig() {
-  const user = process.env.ZOHO_SMTP_USER;
-  const pass = process.env.ZOHO_SMTP_APP_PASSWORD;
-  if (!user || !pass) {
-    throw new Error("Zoho SMTP credentials are not configured");
-  }
-
-  const port = Number(process.env.ZOHO_SMTP_PORT ?? "465");
-  return {
-    host: process.env.ZOHO_SMTP_HOST ?? "smtp.zoho.com",
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  };
-}
 
 const magicLinkCopy: Record<
   Locale,
@@ -43,7 +27,7 @@ const magicLinkCopy: Record<
 // E2E tests can't read a real inbox. Playwright supplies an explicit capture
 // path when it starts the server. When a developer started the dev server
 // first, capture the configured E2E user's email to the same default path so
-// reuseExistingServer works as well. Other recipients still use SMTP during
+// reuseExistingServer works as well. Other recipients use the email service during
 // local development.
 function getE2ECaptureFile(email: string) {
   const e2eEmail = (process.env.PLAYWRIGHT_TEST_USER_EMAIL ?? "test_admin@robust.com").toLowerCase();
@@ -76,11 +60,7 @@ export async function sendMagicLinkEmail(options: {
     return;
   }
 
-  const smtp = getSmtpConfig();
-  const transporter = nodemailer.createTransport(smtp);
-
-  await transporter.sendMail({
-    from: process.env.ZOHO_SMTP_FROM ?? smtp.auth.user,
+  await sendEmail({
     to: options.email,
     subject: copy.subject,
     text: copy.text(options.code, options.link),
@@ -121,11 +101,7 @@ export async function sendPasswordResetEmail(options: {
     return;
   }
 
-  const smtp = getSmtpConfig();
-  const transporter = nodemailer.createTransport(smtp);
-
-  await transporter.sendMail({
-    from: process.env.ZOHO_SMTP_FROM ?? smtp.auth.user,
+  await sendEmail({
     to: options.email,
     subject: copy.subject,
     text: copy.text(options.link),
