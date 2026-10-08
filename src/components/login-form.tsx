@@ -14,10 +14,12 @@ const initialState: AuthFormState = {};
 export function LoginForm({
   dict,
   magicLinkInvalid = false,
+  denied = false,
   next = null,
 }: {
   dict: Dictionary;
   magicLinkInvalid?: boolean;
+  denied?: boolean;
   next?: string | null;
 }) {
   const [magicState, magicAction, magicPending] = useActionState(
@@ -34,6 +36,11 @@ export function LoginForm({
       {magicLinkInvalid && (
         <p className="banner-error" role="alert">
           {dict.login.magicLinkInvalid}
+        </p>
+      )}
+      {denied && (
+        <p className="banner-error" role="alert">
+          {dict.errors.unauthorized}
         </p>
       )}
 

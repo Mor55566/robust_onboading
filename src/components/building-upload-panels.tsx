@@ -107,7 +107,7 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
     if (!floorsBuildingId) return { error: dict.superAdmin.floorsUploadBuildingRequired };
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     reportProgress(10);
-    const result = await importFloorsAction(rows, floorsBuildingId);
+    const result = await importFloorsAction(complexId, rows, floorsBuildingId);
     if (result.error) return { error: result.error };
     reportProgress(100);
     setMessage({
@@ -125,7 +125,7 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     const issues = checkBuildingNames(rows.map((row) => row.building || row.location));
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
-    const result = await previewAreasForSuperAdminAction(rows);
+    const result = await previewAreasForSuperAdminAction(complexId, rows);
     if (result.error || !result.rows) {
       return { error: result.error ?? dict.superAdmin.areasUploadInvalid };
     }
@@ -141,7 +141,7 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
     const issues = checkBuildingNames(rows.map((row) => row.building || row.location));
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
     reportProgress(10);
-    const result = await importAreasForSuperAdminAction(rows);
+    const result = await importAreasForSuperAdminAction(complexId, rows);
     if (result.error) return { error: result.error };
     reportProgress(100);
     setMessage({
@@ -163,6 +163,7 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
     const result = await importEquipmentAction(null, rows, {
       externalIdOnly: true,
+      complexId,
       previewOnly: true,
     });
     if (result.error || !result.preview) {
@@ -182,6 +183,7 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
     reportProgress(10);
     const result = await importEquipmentAction(null, rows, {
       externalIdOnly: true,
+      complexId,
     });
     if (result.error) return { error: result.error };
     reportProgress(100);

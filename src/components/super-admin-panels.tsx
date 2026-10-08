@@ -79,7 +79,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
 
     for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
       const batch = rows.slice(offset, offset + BATCH_SIZE);
-      const result = await importTasksAction(batch);
+      const result = await importTasksAction(complexId, batch);
       created += result.created ?? 0;
       updated += result.updated ?? 0;
 

@@ -6,20 +6,19 @@ import {
   importFileTagsAction,
   importFilesAction,
   previewFileAttachmentsImportAction,
+  validateFilesImportAction,
 } from "@/app/actions/super-admin";
 import { useComplexContext } from "@/components/complex-context";
 import {
   DataUploadModal,
   type ImportPreviewRow,
 } from "@/components/data-upload-modal";
-import {
-  NoComplexSelectedHint,
-  UploadCard,
-  UploadMessage,
-  UploadStatusBadge,
-} from "@/components/upload-card";
+import { DevtoolsScriptGuideModal } from "@/components/devtools-script-guide-modal";
+import { UploadCard, UploadMessage } from "@/components/upload-card";
 import type { Dictionary } from "@/i18n/dictionaries/en";
 import { t } from "@/i18n/t";
+import { DOCUMENT_FILES_EXPORT_SCRIPT } from "@/lib/document-files-export-script";
+import { DOCUMENT_TAGS_EXPORT_SCRIPT } from "@/lib/document-tags-export-script";
 import {
   buildFileAttachmentsCsvTemplate,
   buildFileAttachmentsExcelTemplate,
@@ -39,8 +38,10 @@ import {
 export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
   const { complexId, uploadStatus, refreshUploadStatus } = useComplexContext();
   const [tagsUploadOpen, setTagsUploadOpen] = useState(false);
+  const [tagsGuideOpen, setTagsGuideOpen] = useState(false);
   const [filesUploadOpen, setFilesUploadOpen] = useState(false);
   const [attachmentsUploadOpen, setAttachmentsUploadOpen] = useState(false);
+  const [attachmentsGuideOpen, setAttachmentsGuideOpen] = useState(false);
   const [tagsMessage, setTagsMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -79,9 +80,19 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
     }));
   }
 
+  async function previewFileRowsAsync(
+    rows: FileImportRow[],
+  ): Promise<ImportPreviewRow[] | { error: string }> {
+    const result = await validateFilesImportAction(complexId, rows);
+    if (result.error) {
+      return { error: result.error };
+    }
+    return previewFileRows(rows);
+  }
+
   async function handleTagsImport(rows: FileTagImportRow[]) {
     setTagsMessage(null);
-    const result = await importFileTagsAction(rows);
+    const result = await importFileTagsAction(complexId, rows);
     if (result.error) {
       return { error: result.error };
     }
@@ -108,31 +119,22 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
     const total = rows.length;
     reportProgress(0, { done: 0, total });
 
+    // Batches run one at a time: Next.js queues server actions from the same
+    // client anyway, so "parallel" batches only delayed showing an error
+    // until every batch in the wave had finished.
     const BATCH_SIZE = 10;
-    const PARALLEL_BATCHES = 3;
     let created = 0;
     let updated = 0;
-    let done = 0;
 
-    for (let offset = 0; offset < rows.length; offset += BATCH_SIZE * PARALLEL_BATCHES) {
-      const wave = Array.from({ length: PARALLEL_BATCHES }, (_, index) => {
-        const start = offset + index * BATCH_SIZE;
-        return rows.slice(start, start + BATCH_SIZE);
-      }).filter((batch) => batch.length > 0);
-
-      const results = await Promise.all(
-        wave.map((batch) => importFilesAction(batch)),
-      );
-
-      for (const result of results) {
-        if (result.error) {
-          return { error: result.error };
-        }
-        created += result.created ?? 0;
-        updated += result.updated ?? 0;
+    for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
+      const batch = rows.slice(offset, offset + BATCH_SIZE);
+      const result = await importFilesAction(complexId, batch);
+      if (result.error) {
+        return { error: result.error };
       }
-
-      done = Math.min(offset + wave.reduce((sum, batch) => sum + batch.length, 0), total);
+      created += result.created ?? 0;
+      updated += result.updated ?? 0;
+      const done = Math.min(offset + batch.length, total);
       reportProgress((done / total) * 100, { done, total });
     }
 
@@ -220,31 +222,22 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
     const total = rows.length;
     reportProgress(0, { done: 0, total });
 
-    const BATCH_SIZE = 10;
-    const PARALLEL_BATCHES = 3;
+    // Small batches, one at a time: every row re-uploads its images, so a
+    // big wave left the progress bar at 0% for minutes, and Next.js queues
+    // server actions from the same client anyway.
+    const BATCH_SIZE = 5;
     let created = 0;
     let updated = 0;
-    let done = 0;
 
-    for (let offset = 0; offset < rows.length; offset += BATCH_SIZE * PARALLEL_BATCHES) {
-      const wave = Array.from({ length: PARALLEL_BATCHES }, (_, index) => {
-        const start = offset + index * BATCH_SIZE;
-        return rows.slice(start, start + BATCH_SIZE);
-      }).filter((batch) => batch.length > 0);
-
-      const results = await Promise.all(
-        wave.map((batch) => importFileAttachmentsAction(complexId, batch)),
-      );
-
-      for (const result of results) {
-        if (result.error) {
-          return { error: result.error };
-        }
-        created += result.created ?? 0;
-        updated += result.updated ?? 0;
+    for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
+      const batch = rows.slice(offset, offset + BATCH_SIZE);
+      const result = await importFileAttachmentsAction(complexId, batch);
+      if (result.error) {
+        return { error: result.error };
       }
-
-      done = Math.min(offset + wave.reduce((sum, batch) => sum + batch.length, 0), total);
+      created += result.created ?? 0;
+      updated += result.updated ?? 0;
+      const done = Math.min(offset + batch.length, total);
       reportProgress((done / total) * 100, { done, total });
     }
 
@@ -268,16 +261,20 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
     <div className="space-y-4">
       <UploadMessage message={tagsMessage} />
       <UploadCard
+        stepNumber={1}
         title={dict.superAdmin.fileTagsUploadTitle}
         subtitle={dict.superAdmin.fileTagsUploadSubtitle}
         buttonLabel={dict.admin.uploadData}
         onOpen={() => setTagsUploadOpen(true)}
         disabled={!complexId}
         done={complexId ? uploadStatus?.fileTags : undefined}
+        guideLabel={dict.superAdmin.fileTagsImportGuideButton}
+        onGuide={() => setTagsGuideOpen(true)}
       />
 
       <UploadMessage message={filesMessage} />
       <UploadCard
+        stepNumber={2}
         title={dict.superAdmin.filesUploadTitle}
         subtitle={dict.superAdmin.filesUploadSubtitle}
         buttonLabel={dict.admin.uploadData}
@@ -287,30 +284,17 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
       />
 
       <UploadMessage message={attachmentsMessage} />
-      <section className="surface-card space-y-2 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold">
-                {dict.superAdmin.fileAttachmentsUploadTitle}
-              </h2>
-              <UploadStatusBadge done={complexId ? uploadStatus?.fileAttachments : undefined} />
-            </div>
-            <p className="text-sm text-[var(--text-muted)]">
-              {dict.superAdmin.fileAttachmentsUploadSubtitle}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="btn btn-primary shrink-0"
-            disabled={!complexId}
-            onClick={() => setAttachmentsUploadOpen(true)}
-          >
-            {dict.admin.uploadData}
-          </button>
-        </div>
-        {!complexId ? <NoComplexSelectedHint /> : null}
-      </section>
+      <UploadCard
+        stepNumber={3}
+        title={dict.superAdmin.fileAttachmentsUploadTitle}
+        subtitle={dict.superAdmin.fileAttachmentsUploadSubtitle}
+        buttonLabel={dict.admin.uploadData}
+        onOpen={() => setAttachmentsUploadOpen(true)}
+        disabled={!complexId}
+        done={complexId ? uploadStatus?.fileAttachments : undefined}
+        guideLabel={dict.superAdmin.fileTagsImportGuideButton}
+        onGuide={() => setAttachmentsGuideOpen(true)}
+      />
 
       <DataUploadModal
         open={tagsUploadOpen}
@@ -374,6 +358,7 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
           return parsed;
         }}
         preview={previewFileRows}
+        previewAsync={previewFileRowsAsync}
         onClose={() => setFilesUploadOpen(false)}
         onImport={handleFilesImport}
       />
@@ -426,6 +411,38 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
         previewAsync={previewAttachmentRowsAsync}
         onClose={() => setAttachmentsUploadOpen(false)}
         onImport={handleAttachmentsImport}
+      />
+
+      <DevtoolsScriptGuideModal
+        open={tagsGuideOpen}
+        dict={dict}
+        script={DOCUMENT_TAGS_EXPORT_SCRIPT}
+        copy={{
+          title: dict.superAdmin.fileTagsImportGuideTitle,
+          intro: dict.superAdmin.fileTagsImportGuideIntro,
+          step1Title: dict.superAdmin.fileTagsImportGuideStep1Title,
+          step1Body: dict.superAdmin.fileTagsImportGuideStep1Body,
+          step4Title: dict.superAdmin.fileTagsImportGuideStep4Title,
+          step4Body: dict.superAdmin.fileTagsImportGuideStep4Body,
+          scriptNote: dict.superAdmin.fileTagsImportGuideScriptNote,
+        }}
+        onClose={() => setTagsGuideOpen(false)}
+      />
+
+      <DevtoolsScriptGuideModal
+        open={attachmentsGuideOpen}
+        dict={dict}
+        script={DOCUMENT_FILES_EXPORT_SCRIPT}
+        copy={{
+          title: dict.superAdmin.fileAttachmentsImportGuideTitle,
+          intro: dict.superAdmin.fileAttachmentsImportGuideIntro,
+          step1Title: dict.superAdmin.fileAttachmentsImportGuideStep1Title,
+          step1Body: dict.superAdmin.fileAttachmentsImportGuideStep1Body,
+          step4Title: dict.superAdmin.fileAttachmentsImportGuideStep4Title,
+          step4Body: dict.superAdmin.fileAttachmentsImportGuideStep4Body,
+          scriptNote: dict.superAdmin.fileAttachmentsImportGuideScriptNote,
+        }}
+        onClose={() => setAttachmentsGuideOpen(false)}
       />
     </div>
   );

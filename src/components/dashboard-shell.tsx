@@ -18,9 +18,9 @@ function navItems(dict: Dictionary): { key: OnboardingSection; href: string; lab
     { key: "building", href: "/building", label: dict.profile.tabBuilding },
     { key: "super-admin", href: "/super-admin", label: dict.profile.tabSuperAdmin },
     { key: "scheduled-missions", href: "/scheduled-missions", label: dict.profile.tabScheduledMissions },
+    { key: "users", href: "/users", label: dict.profile.tabUsers },
     { key: "documents", href: "/documents", label: dict.profile.tabFiles },
     { key: "residents", href: "/residents", label: dict.profile.tabResidents },
-    { key: "users", href: "/users", label: dict.profile.tabUsers },
   ];
 }
 

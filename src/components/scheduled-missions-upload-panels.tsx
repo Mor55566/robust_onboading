@@ -75,7 +75,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     const issues = checkBuildingNames(rows.flatMap((row) => row.buildings));
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
-    const result = await importScheduledMissionsAction(rows);
+    const result = await importScheduledMissionsAction(complexId, rows);
     if (result.error) {
       return { error: result.error };
     }
@@ -103,7 +103,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     const issues = checkMissionHistoryRows(rows);
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
-    const result = await previewMissionHistoryImportAction(rows);
+    const result = await previewMissionHistoryImportAction(complexId, rows);
     if ("error" in result) return result;
     return result.rows.map((row) => {
       const detail =
@@ -156,7 +156,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
 
     for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
       const batch = rows.slice(offset, offset + BATCH_SIZE);
-      const result = await importMissionHistoryAction(batch);
+      const result = await importMissionHistoryAction(complexId, batch);
       if (result.error) {
         return { error: result.error };
       }

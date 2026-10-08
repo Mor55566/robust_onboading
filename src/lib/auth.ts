@@ -171,7 +171,10 @@ export async function userCanManageComplexUsers(
 export async function requireSuperAdmin() {
   const user = await requireUser();
   if (user.role !== "super_admin") {
-    redirect("/profile");
+    // This app has no pages for other roles. Send them to the login page so
+    // they can switch to a super-admin account (the session cookie is shared
+    // with with_robust_app on localhost, so this happens in dev).
+    redirect("/login?denied=1");
   }
   return user;
 }

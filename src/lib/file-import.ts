@@ -98,7 +98,7 @@ const FILE_SAMPLE_ROWS: Omit<FileImportRow, "rowNumber">[] = [
     externalId: "63a7f43add488d6b2c254069",
     title: "תעודת בדיקה למערכת CO",
     complex: "TOU Towers",
-    tag: "חוזים",
+    tag: "חוזים, ביטוח",
     resident: "דייר - מנדיי",
   },
 ];
@@ -176,6 +176,14 @@ function resolveComplexByName(
       return complex;
     }
   }
+
+  // Exports spell names inconsistently ("O-Tech" vs "O Tech"), so fall back
+  // to comparing without hyphens, underscores, dots and spaces.
+  const looseKey = (name: string) =>
+    normalizeLookup(name).replace(/[\s\-_.־–—]+/g, "");
+  const loose = looseKey(trimmed);
+  const looseMatches = complexes.filter((complex) => looseKey(complex.name) === loose);
+  if (looseMatches.length === 1) return looseMatches[0]!;
 
   return null;
 }
@@ -383,9 +391,22 @@ export type ResolvedFileImportRow = {
   externalId: string;
   complexId: string;
   title: string;
-  tagId: string | null;
+  tagIds: string[];
   residentId: string | null;
 };
+
+// One cell can name several tags: "כיבוי אש, גנרטורים" → two tags.
+export function splitTagNames(value: string): string[] {
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const part of value.split(/[,،;]/)) {
+    const name = part.trim();
+    if (!name || seen.has(normalizeLookup(name))) continue;
+    seen.add(normalizeLookup(name));
+    names.push(name);
+  }
+  return names;
+}
 
 function fileSeriesExternalKey(complexId: string, externalId: string) {
   return `${complexId}:${externalId}`;
@@ -453,21 +474,21 @@ export function resolveFileImportRows(options: {
       return { ok: false, rowNumber: row.rowNumber, code: "complex", value: row.complex };
     }
 
-    let tagId: string | null = null;
-    if (row.tag.trim()) {
+    const tagIds: string[] = [];
+    for (const tagName of splitTagNames(row.tag)) {
       const tag =
         tagsByComplexAndName.get(
-          `${complex.id}:${normalizeLookup(row.tag)}`,
+          `${complex.id}:${normalizeLookup(tagName)}`,
         ) ?? null;
       if (!tag) {
         return {
           ok: false,
           rowNumber: row.rowNumber,
           code: "tag",
-          value: row.tag,
+          value: tagName,
         };
       }
-      tagId = tag.id;
+      tagIds.push(tag.id);
     }
 
     const residentsInComplex = (options.residents ?? []).filter(
@@ -509,7 +530,7 @@ export function resolveFileImportRows(options: {
       externalId: row.externalId,
       complexId: complex.id,
       title: row.title,
-      tagId,
+      tagIds,
       residentId: resolvedResident.id,
     });
   }
@@ -1006,7 +1027,7 @@ export type ResolvedFileAttachmentImportRow = {
   complexId: string;
   version: number;
   title: string;
-  tagId: string | null;
+  tagIds: string[];
   residentId: string | null;
   startDate: string | null;
   expirationDate: string | null;
@@ -1074,10 +1095,10 @@ export function resolveFileAttachmentImportRows(options: {
   const items: ResolvedFileAttachmentImportRow[] = [];
 
   for (const row of options.rows) {
-    let tagId: string | null = null;
-    if (row.tag.trim()) {
-      tagId = tagsByName.get(normalizeLookup(row.tag))?.id ?? null;
-    }
+    const tagIds = splitTagNames(row.tag).flatMap((tagName) => {
+      const tag = tagsByName.get(normalizeLookup(tagName));
+      return tag ? [tag.id] : [];
+    });
 
     const resolvedResident = resolveImportedResidentId(row.resident, residents);
     if (!resolvedResident.ok) {
@@ -1230,7 +1251,7 @@ export function resolveFileAttachmentImportRows(options: {
       complexId: options.complexId,
       version: row.version,
       title: existingSeries?.title ?? "",
-      tagId,
+      tagIds,
       residentId,
       startDate: hasExpiration ? row.startDate : null,
       expirationDate: hasExpiration ? row.expirationDate : null,

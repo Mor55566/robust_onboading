@@ -1,21 +1,16 @@
-// New for robust_onboading. Several of with_robust_app's ported super-admin
-// import actions resolve a "building" (or, for mission history, a template
-// mission) referenced BY NAME in the uploaded file against every building in
-// the whole system — not just the complex currently selected in this app's
-// header (see src/app/actions/super-admin.ts's importFloorsAction,
-// importAreasForSuperAdminAction, importTasksAction,
-// importScheduledMissionsAction, importMissionHistoryAction, and
-// src/app/actions/admin-shared.ts's importEquipmentAction). That's fine when
-// the name only exists in the intended complex, but if the same (or a
-// prefix/suffix-matching) name also exists in a DIFFERENT complex, the
-// ported code could silently resolve to the wrong one.
+// New for robust_onboading. Client-side, defense-in-depth check that runs
+// before the building / mission-template import actions. Those actions now
+// receive the selected complex and scope every lookup (buildings, floors,
+// areas, equipment, categories, users, existing rows by external_id / call
+// number) to it on the server, so a row can no longer resolve to another
+// complex's data. This module still blocks an upload early, with a clear
+// message, when a referenced name looks like it belongs to a DIFFERENT
+// complex than the one selected — usually a sign the wrong file or the
+// wrong complex was picked.
 //
-// Rather than re-implement each action's own fuzzy-matching algorithm
-// (several slightly different normalizers), this module answers a narrower,
-// safer question: "does this name look like it belongs to some OTHER
-// complex, not the one selected?" A match here means the upload should be
-// blocked before calling the real action; no match doesn't guarantee the
-// name is valid — the real action's own "not found" handling still applies.
+// It answers a narrow question: "does this name look like it belongs to some
+// OTHER complex?" No match doesn't guarantee the name is valid — the real
+// action's own "not found" handling still applies.
 
 export function normalizeForComplexGuard(value: string): string {
   return value.trim().toLocaleLowerCase().replace(/\s+/g, " ");

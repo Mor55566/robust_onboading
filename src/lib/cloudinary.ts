@@ -268,23 +268,37 @@ function mimeFromContentType(contentType: string | null, fileName: string): stri
   return "image/jpeg";
 }
 
+// Without these, one source URL or upload that never answers keeps the
+// whole import request open forever and the UI never sees an error.
+const REMOTE_DOWNLOAD_TIMEOUT_MS = 30_000;
+const REMOTE_UPLOAD_TIMEOUT_MS = 90_000;
+
 async function uploadAttachmentFromUrl(
   url: string,
   mode: UploadMode,
 ): Promise<UploadedFile> {
   let response: Response;
+  let buffer: Buffer;
   try {
     response = await fetch(url, {
       redirect: "follow",
       headers: { Accept: "image/*,*/*" },
+      signal: AbortSignal.timeout(REMOTE_DOWNLOAD_TIMEOUT_MS),
     });
-  } catch {
-    throw new CloudinaryUploadError(`Could not download image: ${url}`);
-  }
-
-  if (!response.ok) {
+    if (!response.ok) {
+      throw new CloudinaryUploadError(
+        `Could not download image (${response.status}): ${url}`,
+      );
+    }
+    buffer = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    if (error instanceof CloudinaryUploadError) throw error;
+    const timedOut =
+      error instanceof DOMException && error.name === "TimeoutError";
     throw new CloudinaryUploadError(
-      `Could not download image (${response.status}): ${url}`,
+      timedOut
+        ? `Image download timed out: ${url}`
+        : `Could not download image: ${url}`,
     );
   }
 
@@ -293,7 +307,6 @@ async function uploadAttachmentFromUrl(
     response.headers.get("content-type"),
     fileName,
   );
-  const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.byteLength === 0) {
     throw new CloudinaryUploadError(`Empty image download: ${url}`);
   }
@@ -310,6 +323,10 @@ async function uploadAttachmentFromUrl(
 
   try {
     const uploaded = await new Promise<UploadApiResponse>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new CloudinaryUploadError(`Cloudinary upload timed out: ${url}`)),
+        REMOTE_UPLOAD_TIMEOUT_MS,
+      );
       const stream = cloudinary.uploader.upload_stream(
         {
           folder: "task-attachments",
@@ -317,9 +334,11 @@ async function uploadAttachmentFromUrl(
           use_filename: true,
           unique_filename: true,
           filename_override: fileName,
+          timeout: REMOTE_UPLOAD_TIMEOUT_MS,
           ...(mode.uploadPreset ? { upload_preset: mode.uploadPreset } : {}),
         },
         (error, result) => {
+          clearTimeout(timer);
           if (error || !result) {
             reject(error ?? new CloudinaryUploadError("Cloudinary upload failed"));
             return;

@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { hashPassword, requireUser } from "@/lib/auth";
-import { resolveBuildingId, resolveComplexId } from "@/lib/building";
 import { sql } from "@/lib/db";
 import { usersSql } from "@/lib/users-db";
 import { getDictionary } from "@/i18n/get-dictionary";
@@ -102,6 +101,18 @@ function buildingsForAreaRow(
   return locationMatches.filter(
     (building) => normalizeBuildingMatch(building.name).length === longestNameLength,
   );
+}
+
+/**
+ * Validates the complex selected in the app header and confirms it exists.
+ * Every import action scopes its name/ID lookups to this complex so a row
+ * can never resolve to (or overwrite) data belonging to another complex.
+ */
+async function resolveImportComplexId(complexId: unknown): Promise<string | null> {
+  const parsed = z.string().uuid().safeParse(complexId);
+  if (!parsed.success) return null;
+  const rows = await sql`SELECT id FROM complexes WHERE id = ${parsed.data} LIMIT 1`;
+  return rows.length > 0 ? parsed.data : null;
 }
 
 export type DeletableTicket = {
@@ -207,7 +218,10 @@ export async function importAutomationsAction(
   return { created, updated };
 }
 
-export async function importAreasForSuperAdminAction(rows: AreaImportRow[]): Promise<{
+export async function importAreasForSuperAdminAction(
+  complexId: string,
+  rows: AreaImportRow[],
+): Promise<{
   error?: string;
   created?: number;
   updated?: number;
@@ -218,8 +232,12 @@ export async function importAreasForSuperAdminAction(rows: AreaImportRow[]): Pro
   if (!Array.isArray(rows) || rows.length === 0) {
     return { error: dict.superAdmin.areasUploadEmpty };
   }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
 
-  const buildingRows = await sql`SELECT id, name FROM buildings ORDER BY name ASC`;
+  const buildingRows = await sql`
+    SELECT id, name FROM buildings WHERE complex_id = ${scopedComplexId} ORDER BY name ASC
+  `;
   const buildings = buildingRows.map((row) => ({
     id: row.id as string,
     name: row.name as string,
@@ -266,6 +284,7 @@ export async function importAreasForSuperAdminAction(rows: AreaImportRow[]): Pro
 }
 
 export async function previewAreasForSuperAdminAction(
+  complexId: string,
   rows: AreaImportRow[],
 ): Promise<{
   error?: string;
@@ -281,13 +300,19 @@ export async function previewAreasForSuperAdminAction(
   if (!Array.isArray(rows) || rows.length === 0) {
     return { error: dict.superAdmin.areasUploadEmpty };
   }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
 
   const [buildingRows, floors, areas] = await Promise.all([
-    sql`SELECT id, name FROM buildings ORDER BY name ASC`,
-    sql`SELECT id, name, number, building_id FROM floors`,
+    sql`SELECT id, name FROM buildings WHERE complex_id = ${scopedComplexId} ORDER BY name ASC`,
+    sql`
+      SELECT id, name, number, building_id FROM floors
+      WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
+    `,
     sql`
       SELECT id, name, floor_id, parent_area_id, external_id, area_type, qr_code, building_id
       FROM areas
+      WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
     `,
   ]);
   const buildings = buildingRows.map((row) => ({
@@ -428,6 +453,7 @@ export async function previewAreasForSuperAdminAction(
 }
 
 export async function importFloorsAction(
+  complexId: string,
   rows: FloorImportRow[],
   buildingId: string,
 ): Promise<{
@@ -455,9 +481,20 @@ export async function importFloorsAction(
     return { error: dict.superAdmin.floorsUploadInvalidRow };
   }
 
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
+
+  // Existing floors are matched (by external_id) only within the selected
+  // complex — a match elsewhere would otherwise get moved into this building.
   const [buildingRows, floorRows] = await Promise.all([
-    sql`SELECT id FROM buildings WHERE id = ${parsedBuildingId.data}`,
-    sql`SELECT id, building_id, name, number, external_id FROM floors`,
+    sql`
+      SELECT id FROM buildings
+      WHERE id = ${parsedBuildingId.data} AND complex_id = ${scopedComplexId}
+    `,
+    sql`
+      SELECT id, building_id, name, number, external_id FROM floors
+      WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
+    `,
   ]);
   if (buildingRows.length === 0) {
     return { error: dict.superAdmin.floorBuildingNotFound };
@@ -895,7 +932,17 @@ export async function importUsersAction(
         UPDATE users
         SET external_id = ${row.externalId}, full_name = ${row.fullName}, email = ${email},
             phone_number = ${row.phoneNumber}, role_description = ${row.roleDescription},
-            password_hash = ${passwordHash}
+            -- Never reset the password of a user who also works in another
+            -- complex: this upload only owns users of the selected complex.
+            password_hash = CASE
+              WHEN EXISTS (
+                SELECT 1 FROM user_complex_permissions ucp
+                WHERE ucp.user_id = ${userId}
+                  AND ucp.complex_id <> ${parsedComplexId.data}
+              ) OR role = 'super_admin'
+              THEN password_hash
+              ELSE ${passwordHash}
+            END
         WHERE id = ${userId}
       `);
       updated += 1;
@@ -1068,6 +1115,7 @@ async function uploadImportUrlsBySource(
     }
     return { ok: true, bySource };
   } catch (error) {
+    console.error("uploadImportUrlsBySource failed:", error);
     if (error instanceof CloudinaryConfigError) {
       return { ok: false, error: dict.errors.cloudinaryNotConfigured };
     }
@@ -1254,6 +1302,7 @@ function describeDbError(error: unknown): string {
 }
 
 export async function importTasksAction(
+  complexId: string,
   rows: TaskImportRow[],
 ): Promise<{
   error?: string;
@@ -1268,20 +1317,27 @@ export async function importTasksAction(
   if (!Array.isArray(rows) || rows.length === 0) {
     return { error: dict.superAdmin.uploadEmpty };
   }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
 
   const [buildings, floors, areas, complexUsers, categories] = await Promise.all([
-    sql`SELECT id, name, complex_id FROM buildings ORDER BY name ASC`,
-    sql`SELECT id, name, number, building_id FROM floors`,
+    sql`SELECT id, name, complex_id FROM buildings WHERE complex_id = ${scopedComplexId} ORDER BY name ASC`,
+    sql`
+      SELECT id, name, number, building_id FROM floors
+      WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
+    `,
     sql`
       SELECT id, name, floor_id, parent_area_id, building_id
       FROM areas
+      WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
     `,
     usersSql`
       SELECT u.id, u.full_name, ucp.complex_id
       FROM users u
       INNER JOIN user_complex_permissions ucp ON ucp.user_id = u.id
+      WHERE ucp.complex_id = ${scopedComplexId}
     `,
-    sql`SELECT id, name FROM task_categories`,
+    sql`SELECT id, name FROM task_categories WHERE complex_id = ${scopedComplexId}`,
   ]);
 
   const usersByComplex = new Map<string, { id: string; full_name: string }[]>();
@@ -1373,18 +1429,17 @@ export async function importTasksAction(
   for (const name of resolved.categoryNamesToCreate) {
     const id = crypto.randomUUID();
     try {
-      // TODO: this bulk-import fallback doesn't carry per-row complex
-      // context yet, so auto-created categories always land on the seed
-      // complex from db/task_categories_add_complex_id.sql.
       await sql`
         INSERT INTO task_categories (id, name, complex_id)
-        VALUES (${id}, ${name}, 'c4c85637-4085-4761-8a4e-3ef08b0eacb5')
+        VALUES (${id}, ${name}, ${scopedComplexId})
       `;
       categoryIdByName.set(name.trim().toLowerCase(), id);
     } catch {
       // Race / unique constraint — re-read.
       const existing = await sql`
-        SELECT id FROM task_categories WHERE name = ${name} LIMIT 1
+        SELECT id FROM task_categories
+        WHERE name = ${name} AND complex_id = ${scopedComplexId}
+        LIMIT 1
       `;
       if (existing[0]?.id) {
         categoryIdByName.set(name.trim().toLowerCase(), existing[0].id as string);
@@ -1410,6 +1465,7 @@ export async function importTasksAction(
           FROM tasks
           WHERE type = 'task'
             AND call_number = ANY(${callNumbers}::bigint[])
+            AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
         `
       : Promise.resolve([] as Record<string, unknown>[]),
     sql`
@@ -1942,6 +1998,7 @@ export async function importCategoriesAction(
 }
 
 export async function importScheduledMissionsAction(
+  complexId: string,
   rows: MissionImportRow[],
 ): Promise<{
   error?: string;
@@ -1956,28 +2013,36 @@ export async function importScheduledMissionsAction(
   if (!Array.isArray(rows) || rows.length === 0) {
     return { error: dict.superAdmin.scheduledMissionsUploadEmpty };
   }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
 
   console.info("importScheduledMissionsAction started", {
     rowCount: rows.length,
   });
 
   const [buildings, floors, areas, equipment, complexUsers, categories] = await Promise.all([
-    sql`SELECT id, name, complex_id FROM buildings ORDER BY name ASC`,
-    sql`SELECT id, name, number, building_id FROM floors`,
+    sql`SELECT id, name, complex_id FROM buildings WHERE complex_id = ${scopedComplexId} ORDER BY name ASC`,
+    sql`
+      SELECT id, name, number, building_id FROM floors
+      WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
+    `,
     sql`
       SELECT id, name, floor_id, parent_area_id, building_id
       FROM areas
+      WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
     `,
     sql`
       SELECT id, name, building_id, floor_id, area_id
       FROM equipment
+      WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
     `,
     usersSql`
       SELECT u.id, u.full_name, ucp.complex_id
       FROM users u
       INNER JOIN user_complex_permissions ucp ON ucp.user_id = u.id
+      WHERE ucp.complex_id = ${scopedComplexId}
     `,
-    sql`SELECT id, name FROM task_categories`,
+    sql`SELECT id, name FROM task_categories WHERE complex_id = ${scopedComplexId}`,
   ]);
 
   const usersByComplex = new Map<string, { id: string; full_name: string }[]>();
@@ -2082,17 +2147,16 @@ export async function importScheduledMissionsAction(
   for (const name of resolved.categoryNamesToCreate) {
     const id = crypto.randomUUID();
     try {
-      // TODO: this bulk-import fallback doesn't carry per-row complex
-      // context yet, so auto-created categories always land on the seed
-      // complex from db/task_categories_add_complex_id.sql.
       await sql`
         INSERT INTO task_categories (id, name, complex_id)
-        VALUES (${id}, ${name}, 'c4c85637-4085-4761-8a4e-3ef08b0eacb5')
+        VALUES (${id}, ${name}, ${scopedComplexId})
       `;
       categoryIdByName.set(name.trim().toLowerCase(), id);
     } catch {
       const existing = await sql`
-        SELECT id FROM task_categories WHERE name = ${name} LIMIT 1
+        SELECT id FROM task_categories
+        WHERE name = ${name} AND complex_id = ${scopedComplexId}
+        LIMIT 1
       `;
       if (existing[0]?.id) {
         categoryIdByName.set(name.trim().toLowerCase(), existing[0].id as string);
@@ -2111,6 +2175,7 @@ export async function importScheduledMissionsAction(
           FROM tasks
           WHERE type = 'template-mission'
             AND external_id = ANY(${externalIds}::text[])
+            AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
         `
       : [];
 
@@ -2370,26 +2435,42 @@ type MissionHistoryReferenceData = {
   templatesByNormalizedTitle: Map<string, MissionHistoryTemplateMatch>;
 };
 
-async function loadMissionHistoryReferenceData(): Promise<MissionHistoryReferenceData> {
+async function loadMissionHistoryReferenceData(
+  complexId: string,
+): Promise<MissionHistoryReferenceData> {
   const [buildings, floors, areas, users, existingMissions, existingExternalIds, templates] =
     await Promise.all([
-      sql`SELECT id, name FROM buildings ORDER BY name ASC`,
-      sql`SELECT id, name, number, building_id FROM floors`,
+      sql`SELECT id, name FROM buildings WHERE complex_id = ${complexId} ORDER BY name ASC`,
+      sql`
+        SELECT id, name, number, building_id FROM floors
+        WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${complexId})
+      `,
       sql`
         SELECT id, name, floor_id, parent_area_id, building_id
         FROM areas
+        WHERE building_id IN (SELECT id FROM buildings WHERE complex_id = ${complexId})
       `,
-      usersSql`SELECT id, full_name FROM users`,
+      usersSql`
+        SELECT DISTINCT u.id, u.full_name
+        FROM users u
+        INNER JOIN user_complex_permissions ucp ON ucp.user_id = u.id
+        WHERE ucp.complex_id = ${complexId}
+      `,
       sql`
         SELECT id, external_id
         FROM tasks
         WHERE type = 'mission' AND external_id IS NOT NULL
+          AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${complexId})
       `,
+      // Deliberately system-wide: tasks.external_id is globally unique, so a
+      // row colliding with ANY existing task (incl. another complex's) is
+      // skipped as a conflict rather than inserted or updated.
       sql`SELECT external_id FROM tasks WHERE external_id IS NOT NULL`,
       sql`
         SELECT id, title, task_category_id, building_id, floor_id, area_id
         FROM tasks
         WHERE type = 'template-mission'
+          AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${complexId})
       `,
     ]);
 
@@ -2459,6 +2540,7 @@ async function loadMissionHistoryReferenceData(): Promise<MissionHistoryReferenc
 }
 
 export async function previewMissionHistoryImportAction(
+  complexId: string,
   rows: MissionHistoryImportRow[],
 ): Promise<{ error: string } | { rows: ResolvedMissionHistoryImportRow[] }> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
@@ -2468,12 +2550,15 @@ export async function previewMissionHistoryImportAction(
   if (!Array.isArray(rows) || rows.length === 0) {
     return { error: dict.superAdmin.missionHistoryUploadEmpty };
   }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
 
-  const refData = await loadMissionHistoryReferenceData();
+  const refData = await loadMissionHistoryReferenceData(scopedComplexId);
   return { rows: classifyMissionHistoryImportRows({ rows, ...refData }) };
 }
 
 export async function importMissionHistoryAction(
+  complexId: string,
   rows: MissionHistoryImportRow[],
 ): Promise<{
   error?: string;
@@ -2489,8 +2574,10 @@ export async function importMissionHistoryAction(
   if (!Array.isArray(rows) || rows.length === 0) {
     return { error: dict.superAdmin.missionHistoryUploadEmpty };
   }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
 
-  const refData = await loadMissionHistoryReferenceData();
+  const refData = await loadMissionHistoryReferenceData(scopedComplexId);
   const classified = classifyMissionHistoryImportRows({ rows, ...refData });
 
   const allImageUrls = [
@@ -2775,7 +2862,25 @@ export async function importMissionHistoryAction(
   };
 }
 
+function isDatabaseConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /error connecting to database|fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|aborted|timeout/i.test(
+    message,
+  );
+}
+
+function describeImportFailure(
+  error: unknown,
+  dict: Awaited<ReturnType<typeof getDictionary>>,
+  fallback: string,
+): string {
+  if (isDatabaseConnectionError(error)) return dict.errors.databaseUnavailable;
+  const detail = error instanceof Error ? error.message : String(error);
+  return `${fallback}: ${detail}`;
+}
+
 export async function importFileTagsAction(
+  complexId: string,
   rows: FileTagImportRow[],
 ): Promise<{
   error?: string;
@@ -2791,25 +2896,28 @@ export async function importFileTagsAction(
     return { error: dict.superAdmin.fileTagsUploadEmpty };
   }
 
+  const parsedComplexId = z.string().uuid().safeParse(complexId);
+  if (!parsedComplexId.success) {
+    return { error: dict.admin.complexNotFound };
+  }
+
   try {
-    const buildingId = await resolveBuildingId(user);
-    if (!buildingId) {
-      return { error: dict.errors.noBuildingAdmin };
-    }
-    const complexId = await resolveComplexId(buildingId);
-    if (!complexId) {
-      return { error: dict.files.noBuilding };
+    const [complex] = await sql`
+      SELECT id FROM complexes WHERE id = ${parsedComplexId.data} LIMIT 1
+    `;
+    if (!complex) {
+      return { error: dict.admin.complexNotFound };
     }
 
     const existing = await sql`
       SELECT id, complex_id, name
       FROM file_tags
-      WHERE complex_id = ${complexId}
+      WHERE complex_id = ${parsedComplexId.data}
     `;
 
     const plan = planFileTagsImport({
       rows,
-      complexId,
+      complexId: parsedComplexId.data,
       existing: existing.map((row) => ({
         id: row.id as string,
         complex_id: row.complex_id as string,
@@ -2858,32 +2966,30 @@ export async function importFileTagsAction(
     };
   } catch (error) {
     console.error("importFileTagsAction failed:", error);
-    return { error: dict.superAdmin.fileTagsUploadFailed };
+    return { error: describeImportFailure(error, dict, dict.superAdmin.fileTagsUploadFailed) };
   }
 }
 
-export async function importFilesAction(
+async function resolveFilesImport(
   rows: FileImportRow[],
-): Promise<{
-  error?: string;
-  success?: string;
-  created?: number;
-  updated?: number;
-}> {
-  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
-  if (user.role !== "super_admin") {
-    return { error: dict.errors.unauthorized };
+  dict: Awaited<ReturnType<typeof getDictionary>>,
+  scopedComplexId: string,
+): Promise<
+  | { error: string }
+  | { items: Extract<ReturnType<typeof resolveFileImportRows>, { ok: true }>["items"] }
+> {
+  let complexes, existing, tags, residents;
+  try {
+    [complexes, existing, tags, residents] = await Promise.all([
+      sql`SELECT id, name FROM complexes ORDER BY name ASC`,
+      sql`SELECT id, complex_id, external_id, title FROM file_series`,
+      sql`SELECT id, complex_id, name FROM file_tags`,
+      listResidentsForImport(),
+    ]);
+  } catch (error) {
+    console.error("importFilesAction failed:", error);
+    return { error: describeImportFailure(error, dict, dict.superAdmin.filesUploadFailed) };
   }
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return { error: dict.superAdmin.filesUploadEmpty };
-  }
-
-  const [complexes, existing, tags, residents] = await Promise.all([
-    sql`SELECT id, name FROM complexes ORDER BY name ASC`,
-    sql`SELECT id, complex_id, external_id, title FROM file_series`,
-    sql`SELECT id, complex_id, name FROM file_tags`,
-    listResidentsForImport(),
-  ]);
 
   const resolved = resolveFileImportRows({
     rows,
@@ -2906,56 +3012,125 @@ export async function importFilesAction(
   });
 
   if (!resolved.ok) {
+    const withRow = (message: string) =>
+      t(dict.superAdmin.uploadRowError, { row: resolved.rowNumber, message });
     if (resolved.code === "tag") {
       return {
-        error: t(dict.superAdmin.fileTagNotFound, { name: resolved.value }),
+        error: withRow(t(dict.superAdmin.fileTagNotFound, { name: resolved.value })),
       };
     }
     if (resolved.code === "resident") {
       return {
-        error: t(dict.superAdmin.fileResidentNotFound, { name: resolved.value }),
+        error: withRow(t(dict.superAdmin.fileResidentNotFound, { name: resolved.value })),
       };
     }
     return {
-      error: t(dict.superAdmin.complexNotFound, { name: resolved.value }),
+      error: withRow(t(dict.superAdmin.complexNotFound, { name: resolved.value })),
     };
   }
 
-  let created = 0;
-  let updated = 0;
+  // The "נכס" column must point at the complex selected in the header —
+  // never write documents into a different complex than the one shown.
+  const foreignRow = resolved.items.find((item) => item.complexId !== scopedComplexId);
+  if (foreignRow) {
+    const row = rows.find((candidate) => candidate.rowNumber === foreignRow.rowNumber);
+    return {
+      error: t(dict.superAdmin.uploadRowError, {
+        row: foreignRow.rowNumber,
+        message: t(dict.superAdmin.fileComplexMismatch, { name: row?.complex ?? "" }),
+      }),
+    };
+  }
 
-  try {
-    for (const item of resolved.items) {
-      if (item.action === "update") {
-        await sql`
+  return { items: resolved.items };
+}
+
+/**
+ * Checks the whole file once before the import starts (complexes, tags and
+ * residents all resolve), so a bad file fails right away in the preview
+ * instead of after several slow batches.
+ */
+export async function validateFilesImportAction(
+  complexId: string,
+  rows: FileImportRow[],
+): Promise<{ error?: string; ok?: true }> {
+  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
+  if (user.role !== "super_admin") {
+    return { error: dict.errors.unauthorized };
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: dict.superAdmin.filesUploadEmpty };
+  }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
+
+  const resolved = await resolveFilesImport(rows, dict, scopedComplexId);
+  if ("error" in resolved) return { error: resolved.error };
+  return { ok: true };
+}
+
+export async function importFilesAction(
+  complexId: string,
+  rows: FileImportRow[],
+): Promise<{
+  error?: string;
+  success?: string;
+  created?: number;
+  updated?: number;
+}> {
+  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
+  if (user.role !== "super_admin") {
+    return { error: dict.errors.unauthorized };
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: dict.superAdmin.filesUploadEmpty };
+  }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
+
+  const resolvedImport = await resolveFilesImport(rows, dict, scopedComplexId);
+  if ("error" in resolvedImport) {
+    return { error: resolvedImport.error };
+  }
+  const resolved = { items: resolvedImport.items };
+
+  // One transaction per batch: a single round trip to the database instead
+  // of one per row, which matters a lot on a slow connection.
+  const queries = resolved.items.map((item) =>
+    item.action === "update"
+      ? sql`
           UPDATE file_series
           SET
             external_id = ${item.externalId},
             title = ${item.title},
-            tag_id = ${item.tagId},
+            tag_id = ${item.tagIds[0] ?? null},
+            tag_ids = ${item.tagIds}::uuid[],
             resident_id = COALESCE(${item.residentId}, resident_id)
           WHERE id = ${item.id}
-        `;
-        updated += 1;
-      } else {
-        await sql`
-          INSERT INTO file_series (id, complex_id, external_id, title, tag_id, resident_id)
+        `
+      : sql`
+          INSERT INTO file_series (id, complex_id, external_id, title, tag_id, tag_ids, resident_id)
           VALUES (
             ${item.id},
             ${item.complexId},
             ${item.externalId},
             ${item.title},
-            ${item.tagId},
+            ${item.tagIds[0] ?? null},
+            ${item.tagIds}::uuid[],
             ${item.residentId}
           )
-        `;
-        created += 1;
-      }
-    }
+        `,
+  );
+
+  try {
+    await sql.transaction(queries);
   } catch (error) {
     console.error("importFilesAction failed:", error);
-    return { error: dict.superAdmin.filesUploadFailed };
+    return { error: describeImportFailure(error, dict, dict.superAdmin.filesUploadFailed) };
   }
+
+  const created = resolved.items.filter((item) => item.action === "create").length;
+  const updated = resolved.items.filter((item) => item.action === "update").length;
 
   revalidatePath("/profile");
   revalidatePath("/documents");
@@ -3272,14 +3447,18 @@ export async function importFileAttachmentsAction(
       const queries: ReturnType<typeof sql>[] = [];
       if (item.seriesAction === "create") {
         queries.push(sql`
-          INSERT INTO file_series (id, complex_id, external_id, title, tag_id, resident_id)
-          VALUES (${item.seriesId}, ${item.complexId}, ${item.externalId}, ${item.title}, ${item.tagId}, ${item.residentId})
+          INSERT INTO file_series (id, complex_id, external_id, title, tag_id, tag_ids, resident_id)
+          VALUES (${item.seriesId}, ${item.complexId}, ${item.externalId}, ${item.title}, ${item.tagIds[0] ?? null}, ${item.tagIds}::uuid[], ${item.residentId})
         `);
       } else {
         queries.push(sql`
           UPDATE file_series
           SET
-            tag_id = COALESCE(${item.tagId}, tag_id),
+            tag_id = COALESCE(${item.tagIds[0] ?? null}, tag_id),
+            tag_ids = CASE
+              WHEN cardinality(${item.tagIds}::uuid[]) > 0 THEN ${item.tagIds}::uuid[]
+              ELSE tag_ids
+            END,
             resident_id = COALESCE(${item.residentId}, resident_id)
           WHERE id = ${item.seriesId}
             AND complex_id = ${item.complexId}

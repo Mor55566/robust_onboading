@@ -233,6 +233,46 @@ export const ru: Dictionary = {
     fileTagsUploadSuccess:
       "Импортировано тегов: {create} новых · {update} обновлений",
     fileTagsUploadFailed: "Не удалось импортировать теги",
+    fileTagsImportGuideButton:
+      "Инструкция",
+    fileTagsImportGuideTitle:
+      "Экспорт тегов документов из Visitt",
+    fileTagsImportGuideIntro:
+      "Выполните следующие шаги, чтобы экспортировать теги документов из Visitt в CSV-файл, а затем загрузите его здесь.",
+    fileTagsImportGuideStep1Title:
+      "Откройте страницу документов в Visitt",
+    fileTagsImportGuideStep1Body:
+      "Войдите в Visitt и откройте страницу документов, чтобы список тегов отображался сбоку страницы.",
+    fileTagsImportGuideStep2Title:
+      "Откройте инструменты разработчика (DevTools)",
+    fileTagsImportGuideStep2Body:
+      "Щёлкните правой кнопкой мыши в любом месте страницы и выберите «Просмотреть код» / «Inspect». Также можно нажать Cmd+Option+I на Mac или F12 / Ctrl+Shift+I в Windows. В открывшейся панели перейдите на вкладку «Console».",
+    fileTagsImportGuideStep3Title:
+      "Сначала разрешите вставку",
+    fileTagsImportGuideStep3Body:
+      "Перед вставкой скрипта введите или вставьте строку ниже в Console и нажмите Enter. Это защитная мера браузера, которая разрешает вставку кода — без неё вставка на следующем шаге будет заблокирована.",
+    fileTagsImportGuideStep4Title:
+      "Вставьте и запустите скрипт",
+    fileTagsImportGuideStep4Body:
+      "Скопируйте скрипт ниже, вставьте его в Console и нажмите Enter. Скрипт прокрутит список тегов, соберёт название и цвет каждого тега и автоматически скачает tags.csv — загрузите этот файл кнопкой «Загрузить данные».",
+    fileTagsImportGuideScriptNote:
+      "Этот скрипт также сохранён в проекте по пути scripts/copy_document_tags.js.",
+    fileTagsImportGuideCopyScript:
+      "Скопировать скрипт",
+    fileAttachmentsImportGuideTitle:
+      "Экспорт файлов документов из Visitt",
+    fileAttachmentsImportGuideIntro:
+      "Выполните следующие шаги, чтобы экспортировать файлы документов (включая версии из истории) из Visitt в CSV-файл, а затем загрузите его здесь.",
+    fileAttachmentsImportGuideStep1Title:
+      "Откройте таблицу документов в Visitt",
+    fileAttachmentsImportGuideStep1Body:
+      "Войдите в Visitt, откройте страницу документов и выберите комплекс, чтобы на странице отображались таблица документов и количество результатов. Не закрывайте вкладку и не кликайте по странице, пока работает скрипт.",
+    fileAttachmentsImportGuideStep4Title:
+      "Вставьте и запустите скрипт",
+    fileAttachmentsImportGuideStep4Body:
+      "Скопируйте скрипт ниже, вставьте его во вкладку Console и нажмите Enter. Скрипт спросит, сколько документов сканировать (по умолчанию — все), откроет каждый документ, соберёт текущий файл и историю и в конце автоматически скачает documents_export.csv — загрузите этот файл кнопкой «Загрузить данные». Прогресс выводится в Console; для больших комплексов это может занять время.",
+    fileAttachmentsImportGuideScriptNote:
+      "Этот скрипт также сохранён в проекте по пути scripts/export_document_files.js.",
     filesUploadTitle: "Загрузка документов",
     filesUploadSubtitle:
       "Скачайте шаблон, заполните документы и загрузите. Столбцы: id, complex (נכס), name (שם), tag (תגית), linked entity (שייך מסמך ל). Эта загрузка только создаёт или обновляет запись серии документа — файл версии не создаётся. id сохраняется как внешний id; name как название серии; тег на серии. Значение вроде «דייר - מנדיי» сопоставляется с жильцом по имени; значение с «(בארכיון)» игнорируется.",
@@ -264,6 +304,7 @@ export const ru: Dictionary = {
     fileAttachmentsPreviewSkip: "{count} уже существуют",
     fileAttachmentsPreviewReuse: "{count} повторно из серии",
     fileTagNotFound: "Тег «{name}» не найден",
+    fileComplexMismatch: "Объект «{name}» не совпадает с комплексом, выбранным в заголовке. Выберите нужный комплекс или исправьте файл.",
     fileResidentNotFound: "Жилец «{name}» не найден",
     fileSeriesTitleAmbiguous:
       "Найдено несколько документов с названием «{name}»; используйте уникальное название для импорта файлов документов.",
@@ -1499,6 +1540,8 @@ export const ru: Dictionary = {
     userCreated: "Пользователь создан",
   },
   errors: {
+    databaseUnavailable:
+      "Сейчас нет связи с базой данных, поэтому ничего не сохранено. Проверьте подключение к интернету и повторите попытку чуть позже.",
     invalidInput: "Недопустимые данные",
     networkError: "Произошла ошибка сети, попробуйте снова",
     equipmentMigrationRequired: "Оборудование пока нельзя сохранить. Выполните db/tasks_add_equipment_id.sql в базе данных и попробуйте снова.",

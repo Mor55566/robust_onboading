@@ -366,7 +366,12 @@ export async function importEquipmentAction(
     installationCost?: string;
     warrantyExpirationDate?: string;
   }>,
-  options?: { externalIdOnly?: boolean; previewOnly?: boolean },
+  options?: {
+    externalIdOnly?: boolean;
+    previewOnly?: boolean;
+    /** Restricts building-name matching to this complex's buildings. */
+    complexId?: string;
+  },
 ): Promise<{
   error?: string;
   success?: string;
@@ -473,8 +478,19 @@ export async function importEquipmentAction(
   }
 
   const adminBuildingIds = new Set(await getAdminBuildingIds(ctx.user));
+  let complexBuildingIds: Set<string> | null = null;
+  if (options?.complexId !== undefined) {
+    const parsedComplexId = z.string().uuid().safeParse(options.complexId);
+    if (!parsedComplexId.success) return { error: dict.admin.complexNotFound };
+    const complexBuildings = await sql`
+      SELECT id FROM buildings WHERE complex_id = ${parsedComplexId.data}
+    `;
+    complexBuildingIds = new Set(complexBuildings.map((row) => row.id as string));
+  }
   const accessibleBuildings = (await getAccessibleBuildings(ctx.user)).filter(
-    (building) => adminBuildingIds.has(building.id),
+    (building) =>
+      adminBuildingIds.has(building.id) &&
+      (!complexBuildingIds || complexBuildingIds.has(building.id)),
   );
   if (accessibleBuildings.length === 0) {
     return { error: dict.errors.noBuildingAdmin };

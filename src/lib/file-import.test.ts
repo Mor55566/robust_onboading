@@ -12,6 +12,7 @@ import {
   parseFilesImportContent,
   resolveFileAttachmentImportRows,
   resolveFileImportRows,
+  splitTagNames,
   type ExistingFileSeries,
   type FileImportRow,
 } from "@/lib/file-import";
@@ -190,7 +191,7 @@ describe("file series import (documents CSV, series-only)", () => {
 
     assert.equal(result.ok, true);
     if (!result.ok) return;
-    assert.equal(result.items[0]?.tagId, "tag-1");
+    assert.deepEqual(result.items[0]?.tagIds, ["tag-1"]);
   });
 
   it("rejects a tag that does not exist in the resolved complex", () => {
@@ -490,7 +491,7 @@ describe("document attachment import", () => {
     assert.equal(item.seriesAction, "reuse");
     assert.equal(item.seriesId, "series-1");
     assert.equal(item.id, "file-latest");
-    assert.equal(item.tagId, "tag-1");
+    assert.deepEqual(item.tagIds, ["tag-1"]);
     assert.equal(item.residentId, "resident-1");
     assert.equal(item.createdByUserId, "user-1");
     assert.equal(item.fileExternalId, "tuejkh7aabxfbt0ngkiq");
@@ -894,5 +895,13 @@ describe("document attachment import", () => {
       item.attachments[0]?.reuse?.storage_url,
       "https://res.cloudinary.com/ours/image/upload/kvmhd9spoznhhnjc76gh.jpeg",
     );
+  });
+});
+
+describe("splitTagNames", () => {
+  it("splits on commas, trims, and drops blanks and duplicates", () => {
+    assert.deepEqual(splitTagNames("כיבוי אש, גנרטורים"), ["כיבוי אש", "גנרטורים"]);
+    assert.deepEqual(splitTagNames(" a ,, A ; b "), ["a", "b"]);
+    assert.deepEqual(splitTagNames(""), []);
   });
 });

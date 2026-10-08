@@ -3,6 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { cache } from "react";
 import { neon } from "@neondatabase/serverless";
+import "@/lib/neon-timeout";
 import { SESSION_COOKIE } from "@/lib/constants";
 
 function getUsersDatabaseUrl() {

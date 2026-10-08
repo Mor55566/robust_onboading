@@ -229,6 +229,46 @@ export const he: Dictionary = {
       "בחלק מהשורות חסר שם תגית, או שיש שם תגית כפול.",
     fileTagsUploadSuccess: "יובאו תגיות: {create} חדשות · {update} עדכונים",
     fileTagsUploadFailed: "לא ניתן לייבא תגיות",
+    fileTagsImportGuideButton:
+      "מדריך",
+    fileTagsImportGuideTitle:
+      "ייצוא תגיות מסמכים מ-Visitt",
+    fileTagsImportGuideIntro:
+      "בצעו את הצעדים הבאים כדי לייצא את תגיות המסמכים מ-Visitt לקובץ CSV, ולאחר מכן להעלות אותו כאן.",
+    fileTagsImportGuideStep1Title:
+      "פתחו את עמוד המסמכים ב-Visitt",
+    fileTagsImportGuideStep1Body:
+      "היכנסו ל-Visitt ופתחו את עמוד המסמכים, כך שרשימת התגיות תוצג בצד העמוד.",
+    fileTagsImportGuideStep2Title:
+      "פתחו את כלי הפיתוח של הדפדפן (DevTools)",
+    fileTagsImportGuideStep2Body:
+      "לחצו קליק ימני בכל מקום בדף ובחרו “בדיקה” או “Inspect” מהתפריט. אפשר גם להשתמש בקיצור מקלדת: Cmd+Option+I במק, או F12 / Ctrl+Shift+I בחלונות. בפאנל שנפתח לחצו על הלשונית “Console”.",
+    fileTagsImportGuideStep3Title:
+      "קודם כול – אפשרו הדבקה",
+    fileTagsImportGuideStep3Body:
+      "לפני שמדביקים את הסקריפט, העתיקו את השורה שלמטה, הקלידו/הדביקו אותה בלשונית ה-Console ולחצו Enter. זהו צעד הגנה של הדפדפן שפותח אפשרות להדביק קוד — בלעדיו ההדבקה בצעד הבא תיחסם.",
+    fileTagsImportGuideStep4Title:
+      "הדביקו והריצו את הסקריפט",
+    fileTagsImportGuideStep4Body:
+      "העתיקו את הסקריפט שלמטה, הדביקו אותו בלשונית ה-Console ולחצו Enter. הסקריפט גולל את רשימת התגיות, אוסף את שם וצבע כל תגית, ומוריד אוטומטית קובץ tags.csv — את הקובץ הזה מעלים בכפתור “העלאת נתונים”.",
+    fileTagsImportGuideScriptNote:
+      "הסקריפט שמור גם בפרויקט בנתיב scripts/copy_document_tags.js.",
+    fileTagsImportGuideCopyScript:
+      "העתקת הסקריפט",
+    fileAttachmentsImportGuideTitle:
+      "ייצוא קבצי מסמכים מ-Visitt",
+    fileAttachmentsImportGuideIntro:
+      "בצעו את הצעדים הבאים כדי לייצא את קבצי המסמכים (כולל גרסאות היסטוריות) מ-Visitt לקובץ CSV, ולאחר מכן להעלות אותו כאן.",
+    fileAttachmentsImportGuideStep1Title:
+      "פתחו את טבלת המסמכים ב-Visitt",
+    fileAttachmentsImportGuideStep1Body:
+      "היכנסו ל-Visitt, פתחו את עמוד המסמכים ובחרו את המתחם הרצוי, כך שטבלת המסמכים ומספר התוצאות יוצגו בעמוד. אל תסגרו את הלשונית ואל תלחצו בעמוד בזמן שהסקריפט רץ.",
+    fileAttachmentsImportGuideStep4Title:
+      "הדביקו והריצו את הסקריפט",
+    fileAttachmentsImportGuideStep4Body:
+      "העתיקו את הסקריפט שלמטה, הדביקו אותו בלשונית ה-Console ולחצו Enter. הסקריפט ישאל כמה מסמכים לסרוק (ברירת המחדל: כולם), יפתח כל מסמך, יאסוף את הקובץ הנוכחי ואת ההיסטוריה שלו, ובסיום יוריד אוטומטית קובץ documents_export.csv — את הקובץ הזה מעלים בכפתור “העלאת נתונים”. ההתקדמות מוצגת ב-Console; במתחם גדול זה יכול לקחת זמן.",
+    fileAttachmentsImportGuideScriptNote:
+      "הסקריפט שמור גם בפרויקט בנתיב scripts/export_document_files.js.",
     filesUploadTitle: "העלאת מסמכים",
     filesUploadSubtitle:
       "הורידו את התבנית, מלאו מסמכים, והעלו. עמודות: מזהה, נכס (מתחם), שם, תגית, שייך מסמך ל. ההעלאה הזו רק יוצרת או מעדכנת את רשומת סדרת המסמך — לא נוצר קובץ בפועל. המזהה נשמר כמזהה חיצוני; השם ככותרת הסדרה; התגית על הסדרה. שייך מסמך ל כמו “דייר - מנדיי” משויך לדייר לפי שם; ערך עם “(בארכיון)” מדולג.",
@@ -259,6 +299,7 @@ export const he: Dictionary = {
     fileAttachmentsPreviewSkip: "{count} כבר קיימים",
     fileAttachmentsPreviewReuse: "{count} ישמשו מחדש מהסדרה",
     fileTagNotFound: "תגית “{name}” לא נמצאה",
+    fileComplexMismatch: "הנכס “{name}” אינו המתחם שנבחר בכותרת. בחרו את המתחם הנכון או תקנו את הקובץ.",
     fileResidentNotFound: "דייר “{name}” לא נמצא",
     fileSeriesTitleAmbiguous:
       "קיימים כמה מסמכים בשם “{name}”; השתמשו בשם ייחודי כדי לייבא קבצי מסמכים.",
@@ -1490,6 +1531,8 @@ export const he: Dictionary = {
     userCreated: "המשתמש נוצר",
   },
   errors: {
+    databaseUnavailable:
+      "אין כרגע חיבור למסד הנתונים, ולכן שום דבר לא נשמר. בדקו את החיבור לאינטרנט ונסו שוב בעוד רגע.",
     invalidInput: "קלט לא תקין",
     networkError: "אירעה שגיאת רשת, נסה שוב",
     equipmentMigrationRequired: "עדיין אי אפשר לשמור ציוד בקריאה. יש להריץ במסד הנתונים את db/tasks_add_equipment_id.sql ואז לנסות שוב.",

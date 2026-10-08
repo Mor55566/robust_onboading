@@ -1,4 +1,5 @@
 import { neon } from "@neondatabase/serverless";
+import "@/lib/neon-timeout";
 import {
   getSessionContext as resolveSessionContext,
   toUuidArrayLiteral,

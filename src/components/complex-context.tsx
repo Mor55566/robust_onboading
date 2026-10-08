@@ -85,7 +85,9 @@ export function ComplexProvider({
     return () => {
       active = false;
     };
-  }, []);
+    // Re-fetched whenever the selected complex changes, so buildings created
+    // since the page loaded are part of the check.
+  }, [complexId]);
 
   useEffect(() => {
     if (!hydrated) return;

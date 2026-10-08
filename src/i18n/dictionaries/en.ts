@@ -230,6 +230,46 @@ export const en = {
     fileTagsUploadSuccess:
       "Imported file tags: {create} new · {update} updates",
     fileTagsUploadFailed: "Could not import file tags",
+    fileTagsImportGuideButton:
+      "Guide",
+    fileTagsImportGuideTitle:
+      "Export document tags from Visitt",
+    fileTagsImportGuideIntro:
+      "Follow these steps to export the document tags from Visitt to a CSV file, then upload it here.",
+    fileTagsImportGuideStep1Title:
+      "Open the documents page in Visitt",
+    fileTagsImportGuideStep1Body:
+      "Sign in to Visitt and open the documents page so the tags list is visible on the side of the page.",
+    fileTagsImportGuideStep2Title:
+      "Open the browser DevTools",
+    fileTagsImportGuideStep2Body:
+      "Right-click anywhere on the page and choose “Inspect”. You can also use a shortcut: Cmd+Option+I on Mac, or F12 / Ctrl+Shift+I on Windows. In the panel that opens, click the “Console” tab.",
+    fileTagsImportGuideStep3Title:
+      "First – enable pasting",
+    fileTagsImportGuideStep3Body:
+      "Before pasting the script, type or paste the line below into the Console and press Enter. This is a browser safety step that unlocks pasting code — without it the paste in the next step is blocked.",
+    fileTagsImportGuideStep4Title:
+      "Paste and run the script",
+    fileTagsImportGuideStep4Body:
+      "Copy the script below, paste it into the Console and press Enter. It scrolls through the tags list, collects each tag's name and color, and downloads tags.csv automatically — upload that file with the “Upload data” button.",
+    fileTagsImportGuideScriptNote:
+      "This script is also saved in the project at scripts/copy_document_tags.js.",
+    fileTagsImportGuideCopyScript:
+      "Copy script",
+    fileAttachmentsImportGuideTitle:
+      "Export document files from Visitt",
+    fileAttachmentsImportGuideIntro:
+      "Follow these steps to export document files (including history versions) from Visitt to a CSV file, then upload it here.",
+    fileAttachmentsImportGuideStep1Title:
+      "Open the documents table in Visitt",
+    fileAttachmentsImportGuideStep1Body:
+      "Sign in to Visitt, open the documents page and pick the complex, so the documents table and the results count are shown. Keep the tab open and avoid clicking on the page while the script runs.",
+    fileAttachmentsImportGuideStep4Title:
+      "Paste and run the script",
+    fileAttachmentsImportGuideStep4Body:
+      "Copy the script below, paste it into the Console tab and press Enter. It asks how many documents to scan (default: all), opens each document, collects its current file and history, and finally downloads documents_export.csv automatically — upload that file with the “Upload data” button. Progress is logged in the Console; large complexes can take a while.",
+    fileAttachmentsImportGuideScriptNote:
+      "This script is also saved in the project at scripts/export_document_files.js.",
     filesUploadTitle: "Upload documents",
     filesUploadSubtitle:
       "Download the template, fill in documents, then upload. Columns: id, complex (נכס), name (שם), tag (תגית), linked entity (שייך מסמך ל). This only creates or updates the document’s series entry — no file version is created. The id is saved as external id; the name as its title; the tag on the series. A value like “דייר - מנדיי” is matched to that resident; a value with “(בארכיון)” is ignored.",
@@ -261,6 +301,7 @@ export const en = {
     fileAttachmentsPreviewSkip: "{count} already exist",
     fileAttachmentsPreviewReuse: "{count} reused from series",
     fileTagNotFound: "File tag “{name}” was not found",
+    fileComplexMismatch: "Property “{name}” is not the complex selected in the header. Select the right complex or fix the file.",
     fileResidentNotFound: "Resident “{name}” was not found",
     fileSeriesTitleAmbiguous:
       "Multiple documents are named “{name}”; use a unique title to import document files.",
@@ -1496,6 +1537,8 @@ export const en = {
     userCreated: "User created",
   },
   errors: {
+    databaseUnavailable:
+      "Couldn't reach the database right now, so nothing was saved. Check your internet connection and try again in a moment.",
     invalidInput: "Invalid input",
     networkError: "A network error occurred, please try again",
     equipmentMigrationRequired: "Equipment cannot be saved yet. Run db/tasks_add_equipment_id.sql on the database, then try again.",

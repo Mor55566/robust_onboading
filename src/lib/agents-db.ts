@@ -1,6 +1,7 @@
 import "server-only";
 
 import { neon } from "@neondatabase/serverless";
+import "@/lib/neon-timeout";
 import { withSessionScope } from "@/lib/scoped-sql";
 
 // New for robust_onboading — with_robust_app has no equivalent yet. The
