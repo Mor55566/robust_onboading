@@ -6,7 +6,12 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from "crypto";
 import { cache } from "react";
 import { SESSION_COOKIE } from "@/lib/constants";
 import { sql as appSql } from "@/lib/db";
-import { getSessionContext, getSessionToken } from "@/lib/session-context";
+import {
+  authLookupSql,
+  getSessionContext,
+  getSessionToken,
+  hashSessionToken,
+} from "@/lib/session-context";
 import { usersSql as sql } from "@/lib/users-db";
 import type { SessionUser, UserRole } from "@/lib/types";
 import { isAdminRole } from "@/lib/types";
@@ -55,8 +60,8 @@ export async function createSession(userId: string) {
   expiresAt.setDate(expiresAt.getDate() + SESSION_DAYS);
 
   await sql`
-    INSERT INTO user_sessions (user_id, session_token, expires_at)
-    VALUES (${userId}, ${sessionToken}, ${expiresAt.toISOString()})
+    INSERT INTO user_sessions (user_id, session_token_hash, expires_at)
+    VALUES (${userId}, ${hashSessionToken(sessionToken)}, ${expiresAt.toISOString()})
   `;
 
   const cookieStore = await cookies();
@@ -74,7 +79,7 @@ export async function deleteSession() {
   const token = cookieStore.get(SESSION_COOKIE)?.value;
 
   if (token) {
-    await sql`DELETE FROM user_sessions WHERE session_token = ${token}`;
+    await sql`DELETE FROM user_sessions WHERE session_token_hash = ${hashSessionToken(token)}`;
     cookieStore.delete(SESSION_COOKIE);
   }
 }
@@ -93,7 +98,7 @@ export const getSession = cache(async (): Promise<SessionUser | null> => {
       await sql`
         UPDATE user_sessions
         SET last_active_at = now()
-        WHERE session_token = ${token}
+        WHERE session_token_hash = ${hashSessionToken(token)}
       `;
     }
   }
@@ -180,7 +185,7 @@ export async function requireSuperAdmin() {
 }
 
 export async function authenticateUser(email: string, password: string) {
-  const rows = await sql`
+  const rows = await authLookupSql`
     SELECT
       u.id,
       u.email,
@@ -238,7 +243,7 @@ function hashMagicCode(code: string, salt: string) {
 export async function createMagicLinkToken(
   email: string,
 ): Promise<MagicLinkTokenResult> {
-  const users = await sql`
+  const users = await authLookupSql`
     SELECT id
     FROM users
     WHERE lower(email) = lower(${email})
@@ -278,7 +283,7 @@ export async function createMagicLinkToken(
 }
 
 export async function consumeMagicCode(email: string, code: string) {
-  const rows = await sql`
+  const rows = await authLookupSql`
     SELECT ml.id::text, ml.user_id::text, ml.code_hash, ml.code_salt
     FROM user_magic_links ml
     JOIN users u ON u.id = ml.user_id

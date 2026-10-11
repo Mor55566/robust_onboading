@@ -1,10 +1,12 @@
 import "server-only";
 
+import { createHash } from "crypto";
 import { cookies } from "next/headers";
 import { cache } from "react";
 import { neon } from "@neondatabase/serverless";
 import "@/lib/neon-timeout";
 import { SESSION_COOKIE } from "@/lib/constants";
+import { withPrefixQuery } from "@/lib/prefixed-sql";
 
 function getUsersDatabaseUrl() {
   const url = process.env.USERS_DATABASE_URL;
@@ -12,7 +14,29 @@ function getUsersDatabaseUrl() {
   return url;
 }
 
-const usersDatabase = neon(getUsersDatabaseUrl());
+/**
+ * Users DB connection for lookups that run before (or to establish) a
+ * session: resolving the session itself, login, magic links. Sets
+ * app.auth_lookup = 'on', the explicit opt-in with_robust_app's
+ * db/users_rls_hardening.sql gives these - a query that just forgot its
+ * session sees nothing once db/users_rls_close_anonymous.sql removes the old
+ * no-session fallback. Never use it for anything a signed-in user asked
+ * for: use usersSql.
+ */
+export const authLookupSql = withPrefixQuery(
+  neon(getUsersDatabaseUrl()),
+  (db) => ({ query: db`SELECT set_config('app.auth_lookup', 'on', true)` }),
+);
+
+/**
+ * user_sessions stores only this hash of the session cookie
+ * (with_robust_app's db/users_session_token_hash.sql), so reading the table
+ * never hands out a usable session. Every lookup/write of a session goes
+ * through it.
+ */
+export function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 export type SessionContext = {
   userId: string;
@@ -52,7 +76,7 @@ export const getSessionContext = cache(
     const token = await getSessionToken();
     if (!token) return null;
 
-    const rows = await usersDatabase`
+    const rows = await authLookupSql`
       SELECT
         u.id::text AS user_id,
         u.email,
@@ -68,7 +92,7 @@ export const getSessionContext = cache(
       FROM user_sessions s
       JOIN users u ON u.id = s.user_id
       LEFT JOIN user_complex_permissions ucp ON ucp.user_id = u.id
-      WHERE s.session_token = ${token}
+      WHERE s.session_token_hash = ${hashSessionToken(token)}
         AND s.expires_at > now()
       GROUP BY u.id, s.last_active_at
       LIMIT 1

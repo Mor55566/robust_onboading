@@ -187,11 +187,21 @@ export async function resetPasswordAction(
   }
 
   const newPasswordHash = await hashPassword(parsed.data.new_password);
-  await sql`
-    UPDATE users
-    SET password_hash = ${newPasswordHash}
-    WHERE id = ${userId}
-  `;
+  // No session yet: act as the user the reset link was just consumed for.
+  // Without app.user_id, RLS (users_update_admin) matched no row and the new
+  // password was silently never saved.
+  const [, updated] = await sql.transaction([
+    sql`SELECT set_config('app.user_id', ${userId}, true)`,
+    sql`
+      UPDATE users
+      SET password_hash = ${newPasswordHash}
+      WHERE id = ${userId}
+      RETURNING id
+    `,
+  ]);
+  if (updated.length === 0) {
+    return { error: dict.errors.resetLinkInvalid };
+  }
 
   await createSession(userId);
   redirect("/");
