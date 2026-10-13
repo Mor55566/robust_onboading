@@ -11,6 +11,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { seedDefaultAgentsForComplex } from "@/lib/agents-db";
+import { grantChainUsersAccessToNewComplex } from "@/lib/chain-permissions";
 import { getDictionary } from "@/i18n/get-dictionary";
 
 export type CreateComplexState = {
@@ -75,6 +76,10 @@ export async function createComplexAction(
   const row = rows[0];
   const complexId = row.id as string;
   const complexName = row.name as string;
+
+  if (chainId) {
+    await grantChainUsersAccessToNewComplex(complexId, chainId);
+  }
 
   let seededAgents = 0;
   try {
