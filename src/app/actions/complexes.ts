@@ -11,13 +11,16 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { seedDefaultAgentsForComplex } from "@/lib/agents-db";
+import { seedDefaultCategoriesForComplex } from "@/lib/default-categories";
 import { grantChainUsersAccessToNewComplex } from "@/lib/chain-permissions";
 import { getDictionary } from "@/i18n/get-dictionary";
 
 export type CreateComplexState = {
   error?: string;
   complex?: { id: string; name: string };
+  building?: { id: string; name: string };
   seededAgents?: number;
+  seededCategories?: number;
 };
 
 const createComplexSchema = z.object({
@@ -25,6 +28,8 @@ const createComplexSchema = z.object({
   address: z.string().trim().optional(),
   squareMeters: z.string().trim().optional(),
   chainId: z.string().trim().optional(),
+  buildingName: z.string().trim().min(1),
+  buildingAddress: z.string().trim().optional(),
 });
 
 export async function createComplexAction(
@@ -41,6 +46,8 @@ export async function createComplexAction(
     address: formData.get("address") ?? undefined,
     squareMeters: formData.get("square_meters") ?? undefined,
     chainId: formData.get("chain_id") ?? undefined,
+    buildingName: formData.get("building_name"),
+    buildingAddress: formData.get("building_address") ?? undefined,
   });
   if (!parsed.success) {
     return { error: dict.errors.nameRequired };
@@ -63,19 +70,36 @@ export async function createComplexAction(
     }
   }
 
+  // Every complex must start with at least one building. Both rows are
+  // inserted in a single statement so a failure never leaves an empty complex.
   const rows = await sql`
-    INSERT INTO complexes (name, address, square_meters, chain_id)
-    VALUES (
-      ${parsed.data.name},
-      ${parsed.data.address || null},
-      ${squareMeters},
-      ${chainId}
+    WITH new_complex AS (
+      INSERT INTO complexes (name, address, square_meters, chain_id)
+      VALUES (
+        ${parsed.data.name},
+        ${parsed.data.address || null},
+        ${squareMeters},
+        ${chainId}
+      )
+      RETURNING id, name
+    ),
+    new_building AS (
+      INSERT INTO buildings (name, address, complex_id, sort_order)
+      SELECT ${parsed.data.buildingName}, ${parsed.data.buildingAddress || null}, id, 0
+      FROM new_complex
+      RETURNING id, name
     )
-    RETURNING id, name
+    SELECT
+      new_complex.id,
+      new_complex.name,
+      new_building.id AS building_id,
+      new_building.name AS building_name
+    FROM new_complex, new_building
   `;
   const row = rows[0];
   const complexId = row.id as string;
   const complexName = row.name as string;
+  const building = { id: row.building_id as string, name: row.building_name as string };
 
   if (chainId) {
     await grantChainUsersAccessToNewComplex(complexId, chainId);
@@ -88,8 +112,17 @@ export async function createComplexAction(
     console.error("seedDefaultAgentsForComplex failed:", error);
   }
 
+  let seededCategories = 0;
+  try {
+    seededCategories = await seedDefaultCategoriesForComplex(complexId);
+  } catch (error) {
+    console.error("seedDefaultCategoriesForComplex failed:", error);
+  }
+
   return {
     complex: { id: complexId, name: complexName },
+    building,
     seededAgents,
+    seededCategories,
   };
 }

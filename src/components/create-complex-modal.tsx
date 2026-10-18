@@ -79,8 +79,23 @@ export function CreateComplexModal({
               </select>
             </div>
           ) : null}
+          <fieldset className="space-y-3 border-t border-[var(--border)] pt-4">
+            <legend className="text-sm font-semibold">בניין ראשון</legend>
+            <div className="space-y-1.5">
+              <label htmlFor="new-complex-building-name" className="field-label">
+                שם הבניין
+              </label>
+              <input id="new-complex-building-name" name="building_name" type="text" required />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="new-complex-building-address" className="field-label">
+                כתובת הבניין (אופציונלי)
+              </label>
+              <input id="new-complex-building-address" name="building_address" type="text" />
+            </div>
+          </fieldset>
           <p className="text-xs text-[var(--text-muted)]">
-            סוכני ברירת המחדל של המערכת (ורשת, אם נבחרה) יועתקו אוטומטית למתחם החדש.
+            סוכני ברירת המחדל של המערכת (ורשת, אם נבחרה) וקטגוריות ברירת המחדל יועתקו אוטומטית למתחם החדש.
           </p>
           {state.error ? (
             <p className="banner-error" role="alert">
