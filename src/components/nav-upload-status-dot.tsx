@@ -21,7 +21,7 @@ export function NavUploadStatusDot({ section }: { section: OnboardingSection }) 
         percent === 100
           ? "bg-[var(--success-soft)] text-[var(--success)]"
           : percent > 0
-            ? "bg-[var(--brand-soft)] text-[var(--brand)]"
+            ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
             : "bg-[var(--surface-muted)] text-[var(--text-muted)]"
       }`}
     >

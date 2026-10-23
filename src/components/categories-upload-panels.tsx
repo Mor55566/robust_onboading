@@ -97,7 +97,7 @@ export function CategoriesUploadPanels({
             </p>
             <button
               type="button"
-              className="text-sm font-medium text-[var(--brand)] hover:text-[var(--brand-hover)] hover:underline"
+              className="text-sm font-medium text-[var(--brand-strong)] hover:text-[var(--brand-hover)] hover:underline"
               onClick={() => setGuideOpen(true)}
             >
               {dict.superAdmin.categoriesImportGuideButton}

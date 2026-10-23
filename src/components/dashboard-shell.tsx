@@ -45,7 +45,7 @@ export function DashboardShell({
     <div className="flex min-h-[100dvh]">
       <aside className="hidden w-64 shrink-0 flex-col border-l bg-[var(--surface)] lg:flex">
         <div className="flex items-center gap-2.5 border-b px-5 py-5">
-          <div className="flex size-9 items-center justify-center rounded-xl bg-[var(--brand-soft)] text-sm font-bold text-[var(--brand)]">
+          <div className="flex size-9 items-center justify-center rounded-xl bg-[var(--brand-soft)] text-sm font-bold text-[var(--brand-strong)]">
             R
           </div>
           <div className="min-w-0">
@@ -60,7 +60,7 @@ export function DashboardShell({
               href={item.href}
               className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 item.key === active
-                  ? "bg-[var(--brand-soft)] text-[var(--brand)]"
+                  ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
                   : "text-[var(--text-muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--text)]"
               }`}
             >
@@ -94,7 +94,7 @@ export function DashboardShell({
               href={item.href}
               className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium ${
                 item.key === active
-                  ? "bg-[var(--brand-soft)] text-[var(--brand)]"
+                  ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
                   : "text-[var(--text-muted)]"
               }`}
             >

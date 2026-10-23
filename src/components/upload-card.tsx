@@ -43,7 +43,7 @@ export function UploadCard({
           {guideLabel && onGuide ? (
             <button
               type="button"
-              className="text-sm font-medium text-[var(--brand)] hover:text-[var(--brand-hover)] hover:underline"
+              className="text-sm font-medium text-[var(--brand-strong)] hover:text-[var(--brand-hover)] hover:underline"
               onClick={onGuide}
             >
               {guideLabel}

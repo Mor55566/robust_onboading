@@ -65,7 +65,7 @@ export function PasswordLoginForm({
         <div className="text-center">
           <Link
             href="/login/forgot-password"
-            className="text-sm font-medium text-[var(--brand)] hover:text-[var(--brand-hover)]"
+            className="text-sm font-medium text-[var(--brand-strong)] hover:text-[var(--brand-hover)]"
           >
             {dict.login.forgotPassword}
           </Link>

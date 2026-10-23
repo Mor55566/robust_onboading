@@ -13,6 +13,7 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: "/Robust-favicon/favicon.ico" },
+      { url: "/Robust-favicon/favicon.svg", type: "image/svg+xml" },
       {
         url: "/Robust-favicon/favicon-16x16.png",
         sizes: "16x16",
@@ -37,7 +38,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#2f5fe0",
+  themeColor: "#f08a14",
 };
 
 export default function RootLayout({

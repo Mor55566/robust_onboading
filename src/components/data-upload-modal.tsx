@@ -384,7 +384,7 @@ export function DataUploadModal<T>({
                 <button
                   type="button"
                   onClick={clearSelectedFile}
-                  className="text-sm font-medium text-[var(--brand)] hover:text-[var(--brand-hover)]"
+                  className="text-sm font-medium text-[var(--brand-strong)] hover:text-[var(--brand-hover)]"
                 >
                   {dict.admin.uploadChooseAnother}
                 </button>

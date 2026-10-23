@@ -1,15 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #f6f7f9;
+  --bg: #faf9f7;
   --surface: #ffffff;
-  --surface-muted: #f1f3f6;
-  --border: #e3e6eb;
-  --text: #171a21;
-  --text-muted: #6b7280;
-  --brand: #2f5fe0;
-  --brand-hover: #2549b3;
-  --brand-soft: #ecf1ff;
+  --surface-muted: #f3efea;
+  --border: #e6e0d9;
+  --text: #1f1a17;
+  --text-muted: #6b625b;
+  /* Brand orange, shared with the main Rebuild app. --brand-strong is the
+     darker shade for orange text, which needs more contrast than fills. */
+  --brand: #d9740a;
+  --brand-hover: #b35b0b;
+  --brand-strong: #b35b0b;
+  --brand-soft: #fff3e4;
   --danger: #d92d20;
   --danger-soft: #fef2f1;
   --success: #12805c;
