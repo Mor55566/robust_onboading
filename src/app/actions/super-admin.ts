@@ -53,6 +53,7 @@ import {
   resolveFileImportRows,
   type FileAttachmentImportDocument,
   type FileImportRow,
+  type FileTagImportPlanItem,
   type FileTagImportRow,
 } from "@/lib/file-import";
 import { listResidentsForImport, residentSql } from "@/lib/resident-db";
@@ -624,7 +625,7 @@ export async function importFloorsAction(
   };
 }
 
-export async function getDeletableTicketsAction(): Promise<{
+export async function getDeletableTicketsAction(complexId: string): Promise<{
   error?: string;
   tickets?: DeletableTicket[];
 }> {
@@ -633,11 +634,19 @@ export async function getDeletableTicketsAction(): Promise<{
     return { error: dict.errors.unauthorized };
   }
 
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) {
+    return { error: dict.admin.complexNotFound };
+  }
+
+  // tasks has no complex_id; the complex comes from building_id -> buildings.
   const rows = await sql`
-    SELECT id, title, description
-    FROM tasks
-    WHERE type = 'task'
-    ORDER BY created_at DESC, id DESC
+    SELECT t.id, t.title, t.description
+    FROM tasks t
+    JOIN buildings b ON b.id = t.building_id
+    WHERE t.type = 'task'
+      AND b.complex_id = ${scopedComplexId}
+    ORDER BY t.created_at DESC, t.id DESC
   `;
 
   return {
@@ -651,7 +660,10 @@ export async function getDeletableTicketsAction(): Promise<{
   };
 }
 
-export async function deleteTicketsAction(ticketIds: string[]): Promise<{
+export async function deleteTicketsAction(
+  complexId: string,
+  ticketIds: string[],
+): Promise<{
   error?: string;
   success?: string;
   deleted?: number;
@@ -661,6 +673,11 @@ export async function deleteTicketsAction(ticketIds: string[]): Promise<{
     return { error: dict.errors.unauthorized };
   }
 
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) {
+    return { error: dict.admin.complexNotFound };
+  }
+
   const parsed = z.array(z.string().uuid()).min(1).max(10_000).safeParse(ticketIds);
   if (!parsed.success) {
     return { error: dict.errors.invalidInput };
@@ -668,10 +685,12 @@ export async function deleteTicketsAction(ticketIds: string[]): Promise<{
   const ids = [...new Set(parsed.data)];
 
   const tickets = await sql`
-    SELECT id
-    FROM tasks
-    WHERE id = ANY(${ids}::uuid[])
-      AND type = 'task'
+    SELECT t.id
+    FROM tasks t
+    JOIN buildings b ON b.id = t.building_id
+    WHERE t.id = ANY(${ids}::uuid[])
+      AND t.type = 'task'
+      AND b.complex_id = ${scopedComplexId}
   `;
   const validIds = tickets.map((row) => row.id as string);
   if (validIds.length === 0) {
@@ -690,30 +709,40 @@ export async function deleteTicketsAction(ticketIds: string[]): Promise<{
   `;
   const storageUrls = attachmentRows.map((row) => row.storage_url as string);
 
+  // Delete the rows first: if the DB rejects the delete, the tickets must keep
+  // their attachments instead of pointing at files already gone from Cloudinary.
+  try {
+    await sql.transaction([
+      sql`
+        DELETE FROM task_attachment_sources
+        WHERE task_attachment_id IN (
+          SELECT id FROM task_attachments
+          WHERE task_id = ANY(${validIds}::uuid[])
+        )
+      `,
+      sql`DELETE FROM task_attachments WHERE task_id = ANY(${validIds}::uuid[])`,
+      sql`DELETE FROM notifications WHERE ticket_id = ANY(${validIds}::uuid[])`,
+      sql`DELETE FROM tasks WHERE id = ANY(${validIds}::uuid[]) AND type = 'task'`,
+    ]);
+  } catch (error) {
+    console.error("deleteTicketsAction failed:", error);
+    const dbError = error as { message?: string; detail?: string };
+    const detail = dbError.detail || dbError.message;
+    return {
+      error: detail
+        ? `${dict.superAdmin.deleteTicketsFailed} (${detail})`
+        : dict.superAdmin.deleteTicketsFailed,
+    };
+  }
+
   if (storageUrls.length > 0) {
     try {
       await deleteCloudinaryByUrls(storageUrls);
     } catch (error) {
-      if (error instanceof CloudinaryConfigError) {
-        return { error: dict.errors.cloudinaryNotConfigured };
-      }
+      // The tickets are already gone; leftover files are only orphaned storage.
       console.error("Cloudinary bulk delete failed:", error);
-      return { error: dict.errors.attachmentDeleteFailed };
     }
   }
-
-  await sql.transaction([
-    sql`
-      DELETE FROM task_attachment_sources
-      WHERE task_attachment_id IN (
-        SELECT id FROM task_attachments
-        WHERE task_id = ANY(${validIds}::uuid[])
-      )
-    `,
-    sql`DELETE FROM task_attachments WHERE task_id = ANY(${validIds}::uuid[])`,
-    sql`DELETE FROM notifications WHERE ticket_id = ANY(${validIds}::uuid[])`,
-    sql`DELETE FROM tasks WHERE id = ANY(${validIds}::uuid[]) AND type = 'task'`,
-  ]);
 
   revalidatePath("/");
   revalidatePath("/my-tasks");
@@ -743,12 +772,11 @@ export async function importResidentsAction(
     return { error: dict.superAdmin.residentsUploadEmpty };
   }
 
-  const complexRows = await sql`
-    SELECT id FROM complexes WHERE id = ${complexId} LIMIT 1
-  `;
-  if (complexRows.length === 0) {
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) {
     return { error: dict.superAdmin.complexNotFound };
   }
+  complexId = scopedComplexId;
 
   const buildings = await sql`
     SELECT id, name
@@ -3037,6 +3065,69 @@ function describeImportFailure(
   return `${fallback}: ${detail}`;
 }
 
+/**
+ * Plans a tags upload against the tags already in the complex: a tag whose
+ * name already exists there is never created again — at most its color is
+ * updated.
+ */
+async function planFileTagsForComplex(
+  complexId: string,
+  rows: FileTagImportRow[],
+  dict: Awaited<ReturnType<typeof getDictionary>>,
+): Promise<{ error: string } | { items: FileTagImportPlanItem[] }> {
+  const parsedComplexId = z.string().uuid().safeParse(complexId);
+  if (!parsedComplexId.success) {
+    return { error: dict.admin.complexNotFound };
+  }
+
+  const [complex] = await sql`
+    SELECT id FROM complexes WHERE id = ${parsedComplexId.data} LIMIT 1
+  `;
+  if (!complex) {
+    return { error: dict.admin.complexNotFound };
+  }
+
+  const existing = await sql`
+    SELECT id, complex_id, name, color
+    FROM file_tags
+    WHERE complex_id = ${parsedComplexId.data}
+  `;
+
+  const plan = planFileTagsImport({
+    rows,
+    complexId: parsedComplexId.data,
+    existing: existing.map((row) => ({
+      id: row.id as string,
+      complex_id: row.complex_id as string,
+      name: row.name as string,
+      color: (row.color as string | null) ?? null,
+    })),
+  });
+  return { items: plan.items };
+}
+
+export async function previewFileTagsImportAction(
+  complexId: string,
+  rows: FileTagImportRow[],
+): Promise<{ error?: string; items?: FileTagImportPlanItem[] }> {
+  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
+  if (user.role !== "super_admin") {
+    return { error: dict.errors.unauthorized };
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: dict.superAdmin.fileTagsUploadEmpty };
+  }
+
+  try {
+    const planned = await planFileTagsForComplex(complexId, rows, dict);
+    if ("error" in planned) return { error: planned.error };
+    return { items: planned.items };
+  } catch (error) {
+    console.error("previewFileTagsImportAction failed:", error);
+    return { error: describeImportFailure(error, dict, dict.superAdmin.fileTagsUploadFailed) };
+  }
+}
+
 export async function importFileTagsAction(
   complexId: string,
   rows: FileTagImportRow[],
@@ -3045,6 +3136,7 @@ export async function importFileTagsAction(
   success?: string;
   created?: number;
   updated?: number;
+  skipped?: number;
 }> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
   if (user.role !== "super_admin") {
@@ -3054,45 +3146,21 @@ export async function importFileTagsAction(
     return { error: dict.superAdmin.fileTagsUploadEmpty };
   }
 
-  const parsedComplexId = z.string().uuid().safeParse(complexId);
-  if (!parsedComplexId.success) {
-    return { error: dict.admin.complexNotFound };
-  }
-
   try {
-    const [complex] = await sql`
-      SELECT id FROM complexes WHERE id = ${parsedComplexId.data} LIMIT 1
-    `;
-    if (!complex) {
-      return { error: dict.admin.complexNotFound };
-    }
+    const planned = await planFileTagsForComplex(complexId, rows, dict);
+    if ("error" in planned) return { error: planned.error };
+    const plan = planned;
 
-    const existing = await sql`
-      SELECT id, complex_id, name
-      FROM file_tags
-      WHERE complex_id = ${parsedComplexId.data}
-    `;
-
-    const plan = planFileTagsImport({
-      rows,
-      complexId: parsedComplexId.data,
-      existing: existing.map((row) => ({
-        id: row.id as string,
-        complex_id: row.complex_id as string,
-        name: row.name as string,
-      })),
-    });
-
-    const queries = plan.items.map((item) =>
-      item.action === "update"
-        ? sql`
+    const queries = plan.items
+      .filter((item) => item.action !== "skip")
+      .map((item) =>
+        item.action === "update"
+          ? sql`
             UPDATE file_tags
-            SET
-              name = ${item.name},
-              color = ${item.color}
+            SET color = ${item.color}
             WHERE id = ${item.id}
           `
-        : sql`
+          : sql`
             INSERT INTO file_tags (id, complex_id, name, color)
             VALUES (
               ${item.id},
@@ -3101,7 +3169,7 @@ export async function importFileTagsAction(
               ${item.color}
             )
           `,
-    );
+      );
 
     const CHUNK = 40;
     for (let i = 0; i < queries.length; i += CHUNK) {
@@ -3110,6 +3178,7 @@ export async function importFileTagsAction(
 
     const created = plan.items.filter((item) => item.action === "create").length;
     const updated = plan.items.filter((item) => item.action === "update").length;
+    const skipped = plan.items.filter((item) => item.action === "skip").length;
 
     revalidatePath("/profile");
     revalidatePath("/documents");
@@ -3118,9 +3187,11 @@ export async function importFileTagsAction(
       success: t(dict.superAdmin.fileTagsUploadSuccess, {
         create: created,
         update: updated,
+        skip: skipped,
       }),
       created,
       updated,
+      skipped,
     };
   } catch (error) {
     console.error("importFileTagsAction failed:", error);

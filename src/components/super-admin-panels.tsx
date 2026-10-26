@@ -244,6 +244,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
           <button
             type="button"
             className="btn btn-danger shrink-0"
+            disabled={!complexId}
             onClick={() => setDeleteOpen(true)}
           >
             {dict.superAdmin.deleteTickets}
@@ -325,7 +326,8 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         onClose={() => setAutomationsGuideOpen(false)}
       />
       <DeleteTicketsModal
-        open={deleteOpen}
+        open={deleteOpen && !!complexId}
+        complexId={complexId}
         dict={dict}
         onClose={() => setDeleteOpen(false)}
         onDeleted={(text) => {
@@ -346,11 +348,13 @@ function plainTicketName(value: string) {
 
 function DeleteTicketsModal({
   open,
+  complexId,
   dict,
   onClose,
   onDeleted,
 }: {
   open: boolean;
+  complexId: string | null;
   dict: Dictionary;
   onClose: () => void;
   onDeleted: (message: string) => void;
@@ -372,7 +376,7 @@ function DeleteTicketsModal({
         setError(null);
         setSelected(new Set());
         setConfirming(false);
-        return getDeletableTicketsAction();
+        return getDeletableTicketsAction(complexId ?? "");
       })
       .then((result) => {
         if (!active || !result) return;
@@ -388,7 +392,7 @@ function DeleteTicketsModal({
     return () => {
       active = false;
     };
-  }, [open, dict.superAdmin.deleteTicketsFailed]);
+  }, [open, complexId, dict.superAdmin.deleteTicketsFailed]);
 
   useEffect(() => {
     if (!open) return;
@@ -423,7 +427,7 @@ function DeleteTicketsModal({
     setDeleting(true);
     setError(null);
     try {
-      const result = await deleteTicketsAction([...selected]);
+      const result = await deleteTicketsAction(complexId ?? "", [...selected]);
       if (result.error) {
         setError(result.error);
         return;

@@ -249,7 +249,11 @@ export const he: Dictionary = {
       "לא ניתן לקרוא את הקובץ. השתמשו בתבנית CSV או Excel.",
     fileTagsUploadInvalidRow:
       "בחלק מהשורות חסר שם תגית, או שיש שם תגית כפול.",
-    fileTagsUploadSuccess: "יובאו תגיות: {create} חדשות · {update} עדכונים",
+    fileTagsUploadSuccess:
+      "יובאו תגיות: {create} חדשות · {update} עודכן צבע · {skip} כפולות (לא הועלו)",
+    fileTagsPreviewDuplicate: "כפולה — התגית כבר קיימת בקומפלקס, לא תועלה",
+    fileTagsPreviewColorUpdate:
+      "כפולה — התגית כבר קיימת, הצבע יעודכן: {from} ← {to}",
     fileTagsUploadFailed: "לא ניתן לייבא תגיות",
     fileTagsImportGuideButton:
       "מדריך",

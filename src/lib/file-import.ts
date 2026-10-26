@@ -330,15 +330,21 @@ export type ExistingFileTag = {
   id: string;
   complex_id: string;
   name: string;
+  color?: string | null;
 };
 
+/**
+ * A tag that already exists in the complex (same name) is never created
+ * again: "update" only changes its color, "skip" means nothing changed.
+ */
 export type FileTagImportPlanItem = {
   rowNumber: number;
-  action: "create" | "update";
+  action: "create" | "update" | "skip";
   id: string;
   complexId: string;
   name: string;
   color: string;
+  previousColor: string | null;
 };
 
 export function planFileTagsImport(options: {
@@ -360,19 +366,24 @@ export function planFileTagsImport(options: {
   for (const row of options.rows) {
     const existing = byName.get(normalizeLookup(row.name)) ?? null;
     const id = existing?.id ?? crypto.randomUUID();
+    const previousColor = existing ? (existing.color ?? null) : null;
+    const sameColor =
+      previousColor != null && previousColor.toLowerCase() === row.color.toLowerCase();
     items.push({
       rowNumber: row.rowNumber,
-      action: existing ? "update" : "create",
+      action: !existing ? "create" : sameColor ? "skip" : "update",
       id,
       complexId: options.complexId,
-      name: row.name,
+      name: existing?.name ?? row.name,
       color: row.color,
+      previousColor,
     });
 
     byName.set(normalizeLookup(row.name), {
       id,
       complex_id: options.complexId,
-      name: row.name,
+      name: existing?.name ?? row.name,
+      color: row.color,
     });
   }
 

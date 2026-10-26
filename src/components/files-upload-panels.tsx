@@ -6,6 +6,7 @@ import {
   importFileTagsAction,
   importFilesAction,
   previewFileAttachmentsImportAction,
+  previewFileTagsImportAction,
   validateFilesImportAction,
 } from "@/app/actions/super-admin";
 import { useComplexContext } from "@/components/complex-context";
@@ -55,12 +56,26 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
     text: string;
   } | null>(null);
 
-  function previewTagRows(rows: FileTagImportRow[]): ImportPreviewRow[] {
-    return rows.map((row) => ({
-      key: `tag-${row.rowNumber}-${row.name}`,
-      label: row.name,
-      detail: row.color,
-      action: "create" as const,
+  async function previewTagRows(
+    rows: FileTagImportRow[],
+  ): Promise<ImportPreviewRow[] | { error: string }> {
+    const result = await previewFileTagsImportAction(complexId, rows);
+    if (result.error || !result.items) {
+      return { error: result.error ?? dict.superAdmin.fileTagsUploadFailed };
+    }
+    return result.items.map((item) => ({
+      key: `tag-${item.rowNumber}-${item.name}`,
+      label: item.name,
+      detail:
+        item.action === "skip"
+          ? dict.superAdmin.fileTagsPreviewDuplicate
+          : item.action === "update"
+            ? t(dict.superAdmin.fileTagsPreviewColorUpdate, {
+                from: item.previousColor ?? "—",
+                to: item.color,
+              })
+            : item.color,
+      action: item.action,
     }));
   }
 
@@ -103,6 +118,7 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
         t(dict.superAdmin.fileTagsUploadSuccess, {
           create: result.created ?? rows.length,
           update: result.updated ?? 0,
+          skip: result.skipped ?? 0,
         }),
     });
     void refreshUploadStatus();
@@ -324,7 +340,7 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
           }
           return parsed;
         }}
-        preview={previewTagRows}
+        previewAsync={previewTagRows}
         onClose={() => setTagsUploadOpen(false)}
         onImport={handleTagsImport}
       />

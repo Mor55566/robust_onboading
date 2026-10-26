@@ -250,7 +250,10 @@ export const en = {
     fileTagsUploadInvalidRow:
       "Some rows are missing a tag name, or a tag name is duplicated.",
     fileTagsUploadSuccess:
-      "Imported file tags: {create} new · {update} updates",
+      "Imported file tags: {create} new · {update} color updated · {skip} duplicates (not uploaded)",
+    fileTagsPreviewDuplicate: "Duplicate — this tag already exists in the complex, it won't be uploaded",
+    fileTagsPreviewColorUpdate:
+      "Duplicate — tag already exists, color will be updated: {from} → {to}",
     fileTagsUploadFailed: "Could not import file tags",
     fileTagsImportGuideButton:
       "Guide",

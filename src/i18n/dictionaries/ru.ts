@@ -253,7 +253,10 @@ export const ru: Dictionary = {
     fileTagsUploadInvalidRow:
       "В некоторых строках отсутствует название тега или оно дублируется.",
     fileTagsUploadSuccess:
-      "Импортировано тегов: {create} новых · {update} обновлений",
+      "Импортировано тегов: {create} новых · {update} с обновлённым цветом · {skip} дубликатов (не загружены)",
+    fileTagsPreviewDuplicate: "Дубликат — тег уже существует в комплексе, не будет загружен",
+    fileTagsPreviewColorUpdate:
+      "Дубликат — тег уже существует, цвет будет обновлён: {from} → {to}",
     fileTagsUploadFailed: "Не удалось импортировать теги",
     fileTagsImportGuideButton:
       "Инструкция",
