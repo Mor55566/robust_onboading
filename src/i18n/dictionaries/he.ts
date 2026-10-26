@@ -88,6 +88,8 @@ export const he: Dictionary = {
     uploadSuccessDetailed:
       "יובאו {created} קריאות חדשות, עודכנו {updated}",
     uploadRowError: "שורה {row}: {message}",
+    invalidCallNumber:
+      "מספר הקריאה \"{callNumber}\" אינו תקין. מספר קריאה חייב להכיל ספרות בלבד.",
     automationsUploadTitle: "העלאת אוטומציות",
     automationsUploadSubtitle: "בחרו מתחם והעלו את קובץ האוטומציות. הנתיב שמופרד ב־> מפוענח כבניין ← קטגוריה ← תת־קטגוריה. שורות עם ערכי +N חסרים ייחסמו כדי למנוע ייבוא חלקי.",
     automationsUploadEmpty: "הקובץ לא מכיל שורות אוטומציות.",
@@ -95,6 +97,20 @@ export const he: Dictionary = {
     automationsUploadInvalidRow: "אחת משורות האוטומציות אינה תקינה.",
     automationsUploadFailed: "לא ניתן לייבא את האוטומציות.",
     automationsUploadSuccess: "יובאו {created} אוטומציות חדשות ועודכנו {updated} אוטומציות.",
+    automationsImportGuideTitle:
+      "ייצוא אוטומציות מ-Visitt",
+    automationsImportGuideIntro:
+      "בצעו את הצעדים הבאים כדי לייצא את האוטומציות מ-Visitt לקובץ CSV, ולאחר מכן להעלות אותו כאן.",
+    automationsImportGuideStep1Title:
+      "פתחו את לשונית האוטומציה ב-Visitt",
+    automationsImportGuideStep1Body:
+      "היכנסו ל-Visitt, פתחו את עמוד המשימות ועברו ללשונית “אוטומציה”, כך שרשימת האוטומציות תוצג. ודאו שאף חלון אוטומציה אינו פתוח.",
+    automationsImportGuideStep4Title:
+      "הדביקו והריצו את הסקריפט",
+    automationsImportGuideStep4Body:
+      "העתיקו את הסקריפט שלמטה, הדביקו אותו בלשונית ה-Console ולחצו Enter. הסקריפט פותח כל אוטומציה לקריאה בלבד, אוסף את התנאים והמשתמשים, סוגר אותה, ובסוף מוריד אוטומטית קובץ automations-YYYY-MM-DD.csv — את הקובץ הזה מעלים בכפתור “העלאת נתונים”. אל תלחצו על הדף בזמן הריצה; ההתקדמות מוצגת ב-Console.",
+    automationsImportGuideScriptNote:
+      "הסקריפט שמור גם בפרויקט בנתיב scripts/export_automations.js.",
     floorsUploadTitle: "העלאת קומות",
     floorsUploadSubtitle:
       "בחרו את הבניין, ואז העלו CSV או Excel בפורמט המצורף. קומות קיימות מתעדכנות לפי המזהה או המפלס.",
@@ -171,6 +187,12 @@ export const he: Dictionary = {
     scheduledMissionsUploadTitle: "העלאת משימות מתוזמנות",
     scheduledMissionsUploadSubtitle:
       "הורידו את התבנית, מלאו את המשימות המתוזמנות, והעלו. מזהה נשמר כמזהה חיצוני. מיקומים נפתרים כמו בשאר הייבואים. עמודת בדיקות ושדות שאין להם עמודה במסד הנתונים מתעלמים מהם.",
+    externalIdInUse:
+      "המזהה {externalId} כבר בשימוש על ידי {type} \"{title}\" במתחם {complex}. מזהה חייב להיות ייחודי בכל המערכת — הסירו את השורה או שנו את המזהה.",
+    scheduledMissionsWriteFailed: "שמירת המשימות המתוזמנות נכשלה אחרי ש-{created} נוצרו ({detail}). תקנו את הבעיה והעלו שוב — שורות שכבר נשמרו יעודכנו ולא ישוכפלו.",
+    externalIdTypeTask: "קריאה",
+    externalIdTypeMission: "משימה",
+    externalIdTypeTemplate: "משימה מתוזמנת",
     scheduledMissionsUploadEmpty: "הקובץ לא מכיל שורות משימות מתוזמנות.",
     scheduledMissionsUploadInvalid:
       "לא ניתן לקרוא את הקובץ. השתמשו בתבנית CSV או Excel.",
@@ -323,6 +345,7 @@ export const he: Dictionary = {
     usersSelectComplex: "מתחם",
     usersUploadEmpty: "הקובץ לא מכיל שורות משתמשים.",
     usersUploadInvalid: "לא ניתן לקרוא את הקובץ. עמודות החובה הן מזהה, שם, אימייל ותפקיד.",
+    usersUploadVisittSkipped: "משתמש Visitt — לא יועלה",
     usersUploadInvalidRow: "באחת השורות יש נתון שגוי או כפול. מזהה, שם, אימייל ותפקיד הם חובה; טלפון ותיאור תפקיד חייבים להיות מספרים שלמים אם הוזנו.",
     usersUploadSuccess: "יובאו משתמשים: {create} חדשים · {update} עדכונים",
     usersUploadFailed: "לא ניתן לייבא משתמשים",
@@ -1253,6 +1276,13 @@ export const he: Dictionary = {
     uploadImporting: "מייבא…",
     uploadProgressCounts: "הועלו {done} מתוך {total} · נותרו {remaining}",
     uploadImportFailed: "הייבוא נכשל. נסו שוב או פנו לתמיכה.",
+    uploadFailuresTitle: "הייבוא הסתיים עם שגיאות",
+    uploadFailuresSummary: "{succeeded} שורות יובאו, {failed} נכשלו",
+    uploadFailuresHint:
+      "השורות שלמטה לא יובאו. הורידו אותן כקובץ CSV, תקנו במידת הצורך, והעלו את הקובץ הזה שוב.",
+    uploadFailureRow: "שורה {row}",
+    uploadFailureCallNumber: "קריאה #{callNumber}",
+    uploadFailuresDownload: "הורדת השורות שנכשלו (CSV)",
     uploadConfirm: "אישור ייבוא",
     uploadReviewing: "קורא קובץ…",
     uploadPreviewTitle: "מה יקרה",
@@ -1313,6 +1343,9 @@ export const he: Dictionary = {
     equipmentUploadedMixed:
       "נוספו {create} פריטי ציוד חדשים, עודכנו {update}.",
     equipmentUploadEmpty: "לא נמצאו שורות ציוד בקובץ.",
+    equipmentUploadTypeCreateFailed: "לא ניתן ליצור את סוג הציוד \"{name}\": {detail}",
+    equipmentUploadNoPermission: "אין לך הרשאה לבצע את השינוי הזה במתחם.",
+    equipmentUploadUnknownError: "שגיאה לא ידועה. נסו שוב או פנו לתמיכה.",
     equipmentUploadFailed: "לא ניתן לייבא את הציוד.",
     equipmentUploadInvalid:
       "לא ניתן לקרוא את הקובץ. הורידו את תבנית ה-CSV או ה-Excel ונסו שוב.",
@@ -1330,6 +1363,7 @@ export const he: Dictionary = {
     equipmentUploadPreviewFloor: "קומה: {name}",
     equipmentUploadPreviewArea: "קומה: {floor} · אזור: {area}",
     equipmentUploadPreviewBuilding: "{building} · {detail}",
+    equipmentUploadPreviewNewType: "סוג ציוד חדש",
     equipmentUploadPreviewChangeName: "שם: {from} → {to}",
     equipmentNeedsNameAndLocation: "יש להזין שם ולבחור מיקום כדי לשמור.",
     areaAdd: "אזור חדש",

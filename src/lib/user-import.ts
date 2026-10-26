@@ -43,6 +43,11 @@ export function buildUsersExcelTemplate() {
   );
 }
 
+/** Visitt's own staff accounts (e.g. support@visitt.io) come along in exports and must not be imported. */
+export function isVisittUser(row: Pick<UserImportRow, "email">): boolean {
+  return row.email.toLocaleLowerCase().includes("visitt");
+}
+
 function optionalInteger(value: string): number | null | undefined {
   const normalized = value.trim().replace(/[\s()-]/g, "");
   if (!normalized) return null;

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { hashPassword, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { usersSql } from "@/lib/users-db";
 import { getDictionary } from "@/i18n/get-dictionary";
@@ -14,6 +14,8 @@ import {
   CloudinaryUploadError,
   deleteCloudinaryByUrls,
   uploadTaskAttachmentsFromUrls,
+  uploadTaskAttachmentsFromUrlsSettled,
+  type SettledUpload,
   type UploadedFile,
 } from "@/lib/cloudinary";
 import {
@@ -55,7 +57,7 @@ import {
 } from "@/lib/file-import";
 import { listResidentsForImport, residentSql } from "@/lib/resident-db";
 import type { ResidentImportRow } from "@/lib/resident-import";
-import type { UserImportRow } from "@/lib/user-import";
+import { isVisittUser, type UserImportRow } from "@/lib/user-import";
 import type { FloorImportRow } from "@/lib/data-import";
 import { importAreasAction } from "@/app/actions/admin-shared";
 import type { AreaImportRow } from "@/lib/area-import";
@@ -869,7 +871,6 @@ export async function importResidentsAction(
 
 export async function importUsersAction(
   complexId: string,
-  password: string,
   rows: UserImportRow[],
 ): Promise<{ error?: string; success?: string; created?: number; updated?: number }> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
@@ -880,10 +881,6 @@ export async function importUsersAction(
   }
   if (rows.length === 0) {
     return { error: dict.superAdmin.usersUploadEmpty };
-  }
-  const parsedPassword = z.string().min(8).safeParse(password);
-  if (!parsedPassword.success) {
-    return { error: dict.errors.passwordMin };
   }
   const complexRows = await sql`SELECT id FROM complexes WHERE id = ${parsedComplexId.data} LIMIT 1`;
   if (complexRows.length === 0) return { error: dict.superAdmin.complexNotFound };
@@ -899,6 +896,8 @@ export async function importUsersAction(
   });
   const parsedRows = z.array(rowSchema).max(10_000).safeParse(rows);
   if (!parsedRows.success) return { error: dict.superAdmin.usersUploadInvalidRow };
+  parsedRows.data = parsedRows.data.filter((row) => !isVisittUser(row));
+  if (parsedRows.data.length === 0) return { error: dict.superAdmin.usersUploadEmpty };
 
   const externalIds = parsedRows.data.map((row) => row.externalId);
   const emails = parsedRows.data.map((row) => row.email.toLocaleLowerCase());
@@ -917,7 +916,6 @@ export async function importUsersAction(
   let created = 0;
   let updated = 0;
   const queries: ReturnType<typeof usersSql>[] = [];
-  const passwordHash = await hashPassword(parsedPassword.data);
   for (const row of parsedRows.data) {
     const email = row.email.toLocaleLowerCase();
     const externalMatch = byExternalId.get(row.externalId);
@@ -931,29 +929,18 @@ export async function importUsersAction(
       queries.push(usersSql`
         UPDATE users
         SET external_id = ${row.externalId}, full_name = ${row.fullName}, email = ${email},
-            phone_number = ${row.phoneNumber}, role_description = ${row.roleDescription},
-            -- Never reset the password of a user who also works in another
-            -- complex: this upload only owns users of the selected complex.
-            password_hash = CASE
-              WHEN EXISTS (
-                SELECT 1 FROM user_complex_permissions ucp
-                WHERE ucp.user_id = ${userId}
-                  AND ucp.complex_id <> ${parsedComplexId.data}
-              ) OR role = 'super_admin'
-              THEN password_hash
-              ELSE ${passwordHash}
-            END
+            phone_number = ${row.phoneNumber}, role_description = ${row.roleDescription}
         WHERE id = ${userId}
       `);
       updated += 1;
     } else {
+      // No password: imported users sign in with a magic link or set one via forgot password.
       queries.push(usersSql`
         INSERT INTO users (
-          id, external_id, email, full_name, role, phone_number, role_description,
-          password_hash
+          id, external_id, email, full_name, role, phone_number, role_description
         ) VALUES (
           ${userId}, ${row.externalId}, ${email}, ${row.fullName}, 'user',
-          ${row.phoneNumber}, ${row.roleDescription}, ${passwordHash}
+          ${row.phoneNumber}, ${row.roleDescription}
         )
       `);
       created += 1;
@@ -994,7 +981,6 @@ const createUserSchema = z.object({
   email: z.email(),
   phoneNumber: z.string().trim(),
   role: z.enum(["user", "admin"]),
-  password: z.string().min(8),
 });
 
 export async function createUserAction(
@@ -1010,13 +996,11 @@ export async function createUserAction(
     email: formData.get("email"),
     phoneNumber: formData.get("phone_number"),
     role: formData.get("role"),
-    password: formData.get("password"),
   });
   if (!parsed.success) {
     const fieldErrors = parsed.error.flatten().fieldErrors;
     if (fieldErrors.complexId) return { error: dict.admin.complexNotFound };
     if (fieldErrors.email) return { error: dict.errors.invalidEmail };
-    if (fieldErrors.password) return { error: dict.errors.passwordMin };
     return { error: dict.errors.nameRequired };
   }
 
@@ -1037,12 +1021,11 @@ export async function createUserAction(
   if (existing.length > 0) return { error: dict.superAdmin.usersEmailTaken };
 
   const userId = randomUUID();
-  const passwordHash = await hashPassword(parsed.data.password);
   try {
     await usersSql.transaction([
       usersSql`
-        INSERT INTO users (id, email, full_name, role, phone_number, password_hash)
-        VALUES (${userId}, ${email}, ${parsed.data.fullName}, 'user', ${phoneNumber}, ${passwordHash})
+        INSERT INTO users (id, email, full_name, role, phone_number)
+        VALUES (${userId}, ${email}, ${parsed.data.fullName}, 'user', ${phoneNumber})
       `,
       usersSql`
         INSERT INTO user_complex_permissions (user_id, complex_id, role)
@@ -1232,6 +1215,14 @@ function queueAttachmentInserts(
           AND tas.source_storage_url = c.source_storage_url
           AND ta.task_id = ${taskId}
       )
+      -- The source row is unique per URL, so a file shared with another task
+      -- has no source row here; match on the stored file too.
+      AND NOT EXISTS (
+        SELECT 1
+        FROM task_attachments ta
+        WHERE ta.task_id = ${taskId}
+          AND ta.storage_url = c.storage_url
+      )
     ),
     inserted_attachments AS (
       INSERT INTO task_attachments (
@@ -1277,15 +1268,6 @@ function queueAttachmentInserts(
   `);
 }
 
-class RowImportError extends Error {
-  constructor(
-    public readonly rowNumber: number | null,
-    public readonly originalError: unknown,
-  ) {
-    super(`Row import failed${rowNumber != null ? ` at row ${rowNumber}` : ""}`);
-  }
-}
-
 // Postgres errors (via @neondatabase/serverless's NeonDbError) carry a
 // human-readable `detail` alongside the raw `message` — surface both so a
 // failed import row is actionable without digging through server logs.
@@ -1301,6 +1283,17 @@ function describeDbError(error: unknown): string {
   return String(error);
 }
 
+export type TaskImportFailure = {
+  rowNumber: number;
+  callNumber: string | null;
+  error: string;
+};
+
+/**
+ * Imports one batch of ticket rows. A row that fails (an image that can't be
+ * copied, a DB error) is reported in `failures` and the rest still import;
+ * `error` is only set when nothing in the batch could be imported.
+ */
 export async function importTasksAction(
   complexId: string,
   rows: TaskImportRow[],
@@ -1309,6 +1302,7 @@ export async function importTasksAction(
   success?: string;
   created?: number;
   updated?: number;
+  failures?: TaskImportFailure[];
 }> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
   if (user.role !== "super_admin") {
@@ -1447,6 +1441,24 @@ export async function importTasksAction(
     }
   }
 
+  // call_number is a bigint column: a non-numeric value would make the
+  // lookups below throw, so reject it with the row it came from.
+  const invalidCallNumberRow = resolved.rows.find(
+    (row) => row.callNumber && !/^\d+$/.test(row.callNumber.trim()),
+  );
+  if (invalidCallNumberRow) {
+    return {
+      error: t(dict.superAdmin.uploadRowError, {
+        row: invalidCallNumberRow.rowNumber,
+        message: t(dict.superAdmin.invalidCallNumber, {
+          callNumber: invalidCallNumberRow.callNumber!.trim(),
+        }),
+      }),
+      created: 0,
+      updated: 0,
+    };
+  }
+
   const callNumbers = [
     ...new Set(
       resolved.rows
@@ -1491,9 +1503,18 @@ export async function importTasksAction(
       storage_url: row.storage_url as string,
     });
   }
+  const failures: TaskImportFailure[] = [];
+  function fail(row: ResolvedTaskImportRow, error: string) {
+    failures.push({
+      rowNumber: row.rowNumber,
+      callNumber: row.callNumber,
+      error,
+    });
+  }
 
   // Upload every missing image for this batch with a bounded worker pool.
   // Once this finishes, each row below only maps already-uploaded assets.
+  // A URL that can't be copied fails only the rows that use it.
   const allSourceUrls = [
     ...new Set(
       resolved.rows.flatMap((row) => [
@@ -1505,291 +1526,281 @@ export async function importTasksAction(
   const missingSourceUrls = allSourceUrls.filter(
     (url) => !sourceAttachmentByUrl.has(url),
   );
+  const failedSourceUrls = new Map<string, string>();
 
   if (missingSourceUrls.length > 0) {
+    let settled: SettledUpload[];
     try {
-      const uploaded = await uploadUrlsWithSources(missingSourceUrls);
-      for (const file of uploaded) {
-        sourceAttachmentByUrl.set(file.source_storage_url, {
-          file_name: file.file_name,
-          mime_type: file.mime_type,
-          storage_url: file.storage_url,
-        });
-      }
+      settled = await uploadTaskAttachmentsFromUrlsSettled(missingSourceUrls, {
+        concurrency: 8,
+      });
     } catch (error) {
       if (error instanceof CloudinaryConfigError) {
         return { error: dict.errors.cloudinaryNotConfigured, created: 0, updated: 0 };
       }
-      if (error instanceof CloudinaryUploadError) {
-        if (/missing permissions|actions=\["create"\]/i.test(error.message)) {
-          return { error: dict.errors.cloudinaryPermissionDenied, created: 0, updated: 0 };
-        }
-        const match = error.message.match(/https?:\/\/\S+/i);
-        return {
-          error: t(dict.superAdmin.uploadRowError, {
-            row: resolved.rows.find((row) =>
-              [...row.imageUrls, ...row.resolutionImageUrls].includes(
-                match?.[0] ?? "",
-              ),
-            )?.rowNumber ?? 1,
-            message: t(dict.superAdmin.imageImportFailed, {
-              url: match?.[0] ?? error.message,
-            }),
-          }),
-          created: 0,
-          updated: 0,
-        };
-      }
       throw error;
+    }
+
+    for (const [index, result] of settled.entries()) {
+      const url = missingSourceUrls[index]!;
+      if (result.ok) {
+        sourceAttachmentByUrl.set(url, {
+          file_name: result.file.file_name,
+          mime_type: result.file.mime_type,
+          storage_url: result.file.storage_url,
+        });
+        continue;
+      }
+      const message =
+        result.error instanceof Error ? result.error.message : String(result.error);
+      // A missing upload permission fails every image — stop instead of
+      // reporting the same problem on every row.
+      if (/missing permissions|actions=\["create"\]|missing upload permission/i.test(message)) {
+        return { error: dict.errors.cloudinaryPermissionDenied, created: 0, updated: 0 };
+      }
+      failedSourceUrls.set(url, message);
     }
   }
 
   const queries: ReturnType<typeof sql>[] = [];
-  const rowBoundaries: { rowNumber: number; start: number; end: number }[] = [];
+  const rowBoundaries: {
+    row: ResolvedTaskImportRow;
+    taskId: string;
+    isNew: boolean;
+    start: number;
+    end: number;
+  }[] = [];
   let created = 0;
   let updated = 0;
   const CHUNK = 40;
 
+  function recordSuccess(boundary: (typeof rowBoundaries)[number]) {
+    if (boundary.isNew) created += 1;
+    else updated += 1;
+  }
+
+  function recordDbFailure(
+    boundary: (typeof rowBoundaries)[number],
+    error: unknown,
+  ) {
+    console.error(
+      `importTasksAction failed at row ${boundary.row.rowNumber}:`,
+      error,
+    );
+    fail(boundary.row, describeDbError(error));
+    // A later row with the same call number must insert, not update a task
+    // that was never created.
+    const callNumber = boundary.row.callNumber?.trim();
+    if (
+      boundary.isNew &&
+      callNumber &&
+      existingByCallNumber.get(callNumber) === boundary.taskId
+    ) {
+      existingByCallNumber.delete(callNumber);
+    }
+  }
+
+  // Called before each row once the batch reaches CHUNK queries, so a batch
+  // always holds whole rows and stays close to CHUNK.
   async function flushQueries() {
     if (queries.length === 0) return;
     const batch = queries.splice(0, queries.length);
     const boundaries = rowBoundaries.splice(0, rowBoundaries.length);
-    for (let i = 0; i < batch.length; i += CHUNK) {
-      const end = Math.min(i + CHUNK, batch.length);
-      try {
-        await sql.transaction(batch.slice(i, end));
-      } catch (error) {
-        // Narrow down which row in this chunk caused the failure by
-        // replaying each row's queries on their own — the failed chunk
-        // transaction rolled back, so DB state is unchanged and the
-        // replay reproduces the same error on the same row.
-        const rowsInChunk = boundaries.filter(
-          (b) => b.start < end && b.end > i,
-        );
-        let failingRowNumber = rowsInChunk[0]?.rowNumber ?? null;
-        for (const boundary of rowsInChunk) {
-          try {
-            await sql.transaction(batch.slice(boundary.start, boundary.end));
-          } catch {
-            failingRowNumber = boundary.rowNumber;
-            break;
-          }
+    try {
+      await sql.transaction(batch);
+      boundaries.forEach(recordSuccess);
+    } catch {
+      // The batch rolled back as a whole. Replay each row in its own
+      // transaction so only the rows that really fail are left out.
+      for (const boundary of boundaries) {
+        try {
+          await sql.transaction(batch.slice(boundary.start, boundary.end));
+          recordSuccess(boundary);
+        } catch (error) {
+          recordDbFailure(boundary, error);
         }
-        throw new RowImportError(failingRowNumber, error);
       }
     }
   }
 
-  try {
-    for (const row of resolved.rows) {
-      const rowQueryStart = queries.length;
-      const existingTaskId = row.callNumber
-        ? (existingByCallNumber.get(row.callNumber.trim()) ?? null)
-        : null;
-
-      const uploaded = await importRowAttachments(row, sourceAttachmentByUrl);
-      if (!uploaded.ok) {
-        await flushQueries();
-        revalidatePath("/");
-        revalidatePath("/all-tasks");
-        revalidatePath("/my-tasks");
-        return {
-          error: t(dict.superAdmin.uploadRowError, {
-            row: row.rowNumber,
-            message: t(dict.superAdmin.imageImportFailed, {
-              url: uploaded.url || uploaded.detail,
-            }),
-          }),
-          created,
-          updated,
-        };
-      }
-
-      const categoryId = row.categoryName
-        ? (categoryIdByName.get(row.categoryName.trim().toLowerCase()) ?? null)
-        : null;
-
-      const taskId = existingTaskId ?? crypto.randomUUID();
-
-      if (existingTaskId) {
-        queries.push(sql`
-          UPDATE tasks
-          SET
-            opened_by_user_id = ${row.openedByUserId},
-            opened_by_name = ${row.openedByName},
-            building_id = ${row.buildingId},
-            task_category_id = ${categoryId},
-            floor_id = ${row.floorId},
-            area_id = ${row.areaId},
-            urgency = ${row.urgency},
-            status = ${row.status},
-            description = ${row.description},
-            call_number = ${row.callNumber}::bigint,
-            due_at = ${row.dueAt},
-            updated_at = now(),
-            resolution = ${row.resolution},
-            resolved_at = ${row.resolvedAt}::timestamptz,
-            resolved_by_user_id = ${row.resolvedByUserId}
-          WHERE id = ${taskId}
-            AND type = 'task'
-        `);
-
-        queries.push(sql`
-          DELETE FROM task_assignees
-          WHERE task_id = ${taskId}
-        `);
-
-        updated += 1;
-      } else {
-        queries.push(sql`
-          INSERT INTO tasks (
-            id,
-            opened_by_user_id,
-            opened_by_name,
-            building_id,
-            task_category_id,
-            floor_id,
-            area_id,
-            type,
-            urgency,
-            status,
-            description,
-            call_number,
-            due_at,
-            created_at,
-            updated_at,
-            resolution,
-            resolved_at,
-            resolved_by_user_id
-          )
-          VALUES (
-            ${taskId},
-            ${row.openedByUserId},
-            ${row.openedByName},
-            ${row.buildingId},
-            ${categoryId},
-            ${row.floorId},
-            ${row.areaId},
-            'task',
-            ${row.urgency},
-            ${row.status},
-            ${row.description},
-            ${row.callNumber}::bigint,
-            ${row.dueAt},
-            COALESCE(${row.createdAt}::timestamptz, now()),
-            COALESCE(${row.createdAt}::timestamptz, now()),
-            ${row.resolution},
-            ${row.resolvedAt}::timestamptz,
-            ${row.resolvedByUserId}
-          )
-        `);
-
-        if (row.callNumber) {
-          existingByCallNumber.set(row.callNumber.trim(), taskId);
-        }
-        created += 1;
-      }
-
-      if (row.assigneeIds.length > 0) {
-        queries.push(sql`
-          INSERT INTO task_assignees (task_id, user_id)
-          SELECT ${taskId}, unnest(${row.assigneeIds}::uuid[])
-        `);
-      }
-
-      queueAttachmentInserts(queries, taskId, "opening", uploaded.opening);
-      queueAttachmentInserts(
-        queries,
-        taskId,
-        "resolution",
-        uploaded.resolution,
+  for (const row of resolved.rows) {
+    const rowUrls = [...row.imageUrls, ...row.resolutionImageUrls];
+    const failedUrl = rowUrls.find((url) => failedSourceUrls.has(url));
+    if (failedUrl) {
+      fail(
+        row,
+        t(dict.superAdmin.imageImportFailed, {
+          url: failedSourceUrls.get(failedUrl) ?? failedUrl,
+        }),
       );
-
-      // A missing checklist column means "leave existing data alone". When
-      // present (including an empty value), the CSV is authoritative.
-      if (row.checklistItems !== null) {
-        queries.push(sql`
-          DELETE FROM task_checklists
-          WHERE task_id = ${taskId}
-        `);
-
-        if (row.checklistItems.length > 0) {
-          const checklistId = crypto.randomUUID();
-          const itemIds = row.checklistItems.map(() => crypto.randomUUID());
-          queries.push(sql`
-            INSERT INTO task_checklists (id, task_id, title, sort_order)
-            VALUES (${checklistId}, ${taskId}, ${"צ'קליסט"}, 0)
-          `);
-          queries.push(sql`
-            INSERT INTO task_checklist_items (
-              id, task_checklist_id, label, sort_order, is_completed,
-              completed_at, completed_by_user_id
-            )
-            SELECT
-              x.id,
-              ${checklistId},
-              x.label,
-              x.sort_order,
-              x.is_completed,
-              CASE WHEN x.is_completed THEN now() ELSE NULL END,
-              CASE WHEN x.is_completed THEN ${user.id}::uuid ELSE NULL END
-            FROM unnest(
-              ${itemIds}::uuid[],
-              ${row.checklistItems.map((item) => item.label)}::text[],
-              ${row.checklistItems.map((_, index) => index)}::int[],
-              ${row.checklistItems.map((item) => item.isCompleted)}::boolean[]
-            ) AS x(id, label, sort_order, is_completed)
-          `);
-        }
-      }
-
-      rowBoundaries.push({
-        rowNumber: row.rowNumber,
-        start: rowQueryStart,
-        end: queries.length,
-      });
-
-      if (queries.length >= CHUNK) {
-        await flushQueries();
-      }
+      continue;
     }
 
-    await flushQueries();
-  } catch (error) {
-    await flushQueries().catch(() => undefined);
-    if (error instanceof CloudinaryConfigError) {
-      return { error: dict.errors.cloudinaryNotConfigured, created, updated };
-    }
-    if (error instanceof RowImportError) {
-      console.error(
-        `importTasksAction failed at row ${error.rowNumber}:`,
-        error.originalError,
+    const uploaded = await importRowAttachments(row, sourceAttachmentByUrl);
+    if (!uploaded.ok) {
+      fail(
+        row,
+        t(dict.superAdmin.imageImportFailed, {
+          url: uploaded.detail || uploaded.url,
+        }),
       );
-      return {
-        error:
-          error.rowNumber != null
-            ? t(dict.superAdmin.uploadRowError, {
-                row: error.rowNumber,
-                message: describeDbError(error.originalError),
-              })
-            : dict.admin.uploadImportFailed,
-        created,
-        updated,
-      };
+      continue;
     }
-    if (error instanceof CloudinaryUploadError) {
-      if (/missing permissions|actions=\["create"\]/i.test(error.message)) {
-        return {
-          error: dict.errors.cloudinaryPermissionDenied,
-          created,
-          updated,
-        };
+
+    if (queries.length >= CHUNK) {
+      await flushQueries();
+    }
+
+    const rowQueryStart = queries.length;
+    const existingTaskId = row.callNumber
+      ? (existingByCallNumber.get(row.callNumber.trim()) ?? null)
+      : null;
+
+    const categoryId = row.categoryName
+      ? (categoryIdByName.get(row.categoryName.trim().toLowerCase()) ?? null)
+      : null;
+
+    const taskId = existingTaskId ?? crypto.randomUUID();
+
+    if (existingTaskId) {
+      queries.push(sql`
+        UPDATE tasks
+        SET
+          opened_by_user_id = ${row.openedByUserId},
+          opened_by_name = ${row.openedByName},
+          building_id = ${row.buildingId},
+          task_category_id = ${categoryId},
+          floor_id = ${row.floorId},
+          area_id = ${row.areaId},
+          urgency = ${row.urgency},
+          status = COALESCE(${row.statusProvided ? row.status : null}, status),
+          description = ${row.description},
+          call_number = ${row.callNumber}::bigint,
+          due_at = ${row.dueAt},
+          updated_at = now(),
+          resolution = ${row.resolution},
+          resolved_at = ${row.resolvedAt}::timestamptz,
+          resolved_by_user_id = ${row.resolvedByUserId}
+        WHERE id = ${taskId}
+          AND type = 'task'
+      `);
+
+      queries.push(sql`
+        DELETE FROM task_assignees
+        WHERE task_id = ${taskId}
+      `);
+    } else {
+      queries.push(sql`
+        INSERT INTO tasks (
+          id,
+          opened_by_user_id,
+          opened_by_name,
+          building_id,
+          task_category_id,
+          floor_id,
+          area_id,
+          type,
+          urgency,
+          status,
+          description,
+          call_number,
+          due_at,
+          created_at,
+          updated_at,
+          resolution,
+          resolved_at,
+          resolved_by_user_id
+        )
+        VALUES (
+          ${taskId},
+          ${row.openedByUserId},
+          ${row.openedByName},
+          ${row.buildingId},
+          ${categoryId},
+          ${row.floorId},
+          ${row.areaId},
+          'task',
+          ${row.urgency},
+          ${row.status},
+          ${row.description},
+          ${row.callNumber}::bigint,
+          ${row.dueAt},
+          COALESCE(${row.createdAt}::timestamptz, now()),
+          COALESCE(${row.createdAt}::timestamptz, now()),
+          ${row.resolution},
+          ${row.resolvedAt}::timestamptz,
+          ${row.resolvedByUserId}
+        )
+      `);
+
+      if (row.callNumber) {
+        existingByCallNumber.set(row.callNumber.trim(), taskId);
       }
-      return { error: error.message, created, updated };
     }
-    console.error("importTasksAction failed:", error);
-    return { error: dict.admin.uploadImportFailed, created, updated };
+
+    if (row.assigneeIds.length > 0) {
+      queries.push(sql`
+        INSERT INTO task_assignees (task_id, user_id)
+        SELECT ${taskId}, unnest(${row.assigneeIds}::uuid[])
+      `);
+    }
+
+    queueAttachmentInserts(queries, taskId, "opening", uploaded.opening);
+    queueAttachmentInserts(
+      queries,
+      taskId,
+      "resolution",
+      uploaded.resolution,
+    );
+
+    // A missing checklist column means "leave existing data alone". When
+    // present (including an empty value), the CSV is authoritative.
+    if (row.checklistItems !== null) {
+      queries.push(sql`
+        DELETE FROM task_checklists
+        WHERE task_id = ${taskId}
+      `);
+
+      if (row.checklistItems.length > 0) {
+        const checklistId = crypto.randomUUID();
+        const itemIds = row.checklistItems.map(() => crypto.randomUUID());
+        queries.push(sql`
+          INSERT INTO task_checklists (id, task_id, title, sort_order)
+          VALUES (${checklistId}, ${taskId}, ${"צ'קליסט"}, 0)
+        `);
+        queries.push(sql`
+          INSERT INTO task_checklist_items (
+            id, task_checklist_id, label, sort_order, is_completed,
+            completed_at, completed_by_user_id
+          )
+          SELECT
+            x.id,
+            ${checklistId},
+            x.label,
+            x.sort_order,
+            x.is_completed,
+            CASE WHEN x.is_completed THEN now() ELSE NULL END,
+            CASE WHEN x.is_completed THEN ${user.id}::uuid ELSE NULL END
+          FROM unnest(
+            ${itemIds}::uuid[],
+            ${row.checklistItems.map((item) => item.label)}::text[],
+            ${row.checklistItems.map((_, index) => index)}::int[],
+            ${row.checklistItems.map((item) => item.isCompleted)}::boolean[]
+          ) AS x(id, label, sort_order, is_completed)
+        `);
+      }
+    }
+
+    rowBoundaries.push({
+      row,
+      taskId,
+      isNew: !existingTaskId,
+      start: rowQueryStart,
+      end: queries.length,
+    });
   }
+
+  await flushQueries();
 
   revalidatePath("/");
   revalidatePath("/all-tasks");
@@ -1800,10 +1811,12 @@ export async function importTasksAction(
       ? t(dict.superAdmin.uploadSuccessDetailed, { created, updated })
       : t(dict.superAdmin.uploadSuccess, { count: created });
 
+  failures.sort((a, b) => a.rowNumber - b.rowNumber);
   return {
     success,
     created,
     updated,
+    failures,
   };
 }
 
@@ -2165,8 +2178,34 @@ export async function importScheduledMissionsAction(
   }
 
   const externalIds = [
-    ...new Set(resolved.rows.map((row) => row.externalId.trim())),
+    ...new Set(
+      resolved.rows.map((row) => row.externalId.trim()).filter(Boolean),
+    ),
   ];
+
+  // Rows without an external id (files keyed only by source_index) are
+  // matched to this complex's existing scheduled missions by title, so a
+  // re-upload updates them instead of creating duplicates.
+  const missionsWithoutExternalId = resolved.rows.some(
+    (row) => !row.externalId.trim(),
+  );
+  const existingTemplatesByTitle = new Map<string, string[]>();
+  if (missionsWithoutExternalId) {
+    const templateRows = await sql`
+      SELECT id, title
+      FROM tasks
+      WHERE type = 'template-mission'
+        AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
+      ORDER BY created_at ASC
+    `;
+    for (const row of templateRows) {
+      const key = normalizeLookup((row.title as string | null) ?? "");
+      if (!key) continue;
+      const list = existingTemplatesByTitle.get(key) ?? [];
+      list.push(row.id as string);
+      existingTemplatesByTitle.set(key, list);
+    }
+  }
 
   const existingRows =
     externalIds.length > 0
@@ -2183,6 +2222,53 @@ export async function importScheduledMissionsAction(
     existingRows.map((row) => [row.external_id as string, row.id as string]),
   );
 
+  // tasks.external_id is unique across all complexes and task types
+  // (tasks_external_id_uidx). An ID used by anything other than this complex's
+  // scheduled mission can't be inserted, so stop with a readable error first.
+  const foreignExternalIds = externalIds.filter(
+    (externalId) => externalId && !existingByExternalId.has(externalId),
+  );
+  if (foreignExternalIds.length > 0) {
+    const conflicts = await sql`
+      SELECT t.external_id, t.type, t.title, t.description, c.name AS complex_name
+      FROM tasks t
+      LEFT JOIN buildings b ON b.id = t.building_id
+      LEFT JOIN complexes c ON c.id = b.complex_id
+      WHERE t.external_id = ANY(${foreignExternalIds}::text[])
+      LIMIT 1
+    `;
+    const conflict = conflicts[0];
+    if (conflict) {
+      const externalId = conflict.external_id as string;
+      const rowNumber =
+        resolved.rows.find((row) => row.externalId.trim() === externalId)
+          ?.rowNumber ?? 1;
+      const type =
+        conflict.type === "template-mission"
+          ? dict.superAdmin.externalIdTypeTemplate
+          : conflict.type === "mission"
+            ? dict.superAdmin.externalIdTypeMission
+            : dict.superAdmin.externalIdTypeTask;
+      const title =
+        ((conflict.title as string | null) ||
+          (conflict.description as string | null) ||
+          "").slice(0, 60);
+      return {
+        error: t(dict.superAdmin.uploadRowError, {
+          row: rowNumber,
+          message: t(dict.superAdmin.externalIdInUse, {
+            externalId,
+            type,
+            title,
+            complex: (conflict.complex_name as string | null) ?? "?",
+          }),
+        }),
+        created: 0,
+        updated: 0,
+      };
+    }
+  }
+
   const queries: ReturnType<typeof sql>[] = [];
   let created = 0;
   let updated = 0;
@@ -2198,8 +2284,13 @@ export async function importScheduledMissionsAction(
 
   try {
     for (const row of resolved.rows) {
-      const existingMissionId =
-        existingByExternalId.get(row.externalId.trim()) ?? null;
+      const externalId = row.externalId.trim() || null;
+      // Each existing mission is matched by title at most once, so two file
+      // missions with the same title don't collapse into one.
+      const existingMissionId = externalId
+        ? (existingByExternalId.get(externalId) ?? null)
+        : (existingTemplatesByTitle.get(normalizeLookup(row.title))?.shift() ??
+          null);
       const missionId = existingMissionId ?? crypto.randomUUID();
       const categoryId = row.categoryName
         ? (categoryIdByName.get(row.categoryName.trim().toLowerCase()) ?? null)
@@ -2270,7 +2361,7 @@ export async function importScheduledMissionsAction(
           )
           VALUES (
             ${missionId},
-            ${row.externalId},
+            ${externalId},
             ${row.openedByUserId},
             ${row.openedByName},
             ${row.buildingId},
@@ -2307,7 +2398,7 @@ export async function importScheduledMissionsAction(
           )
         `);
 
-        existingByExternalId.set(row.externalId.trim(), missionId);
+        if (externalId) existingByExternalId.set(externalId, missionId);
         created += 1;
       }
 
@@ -2401,7 +2492,10 @@ export async function importScheduledMissionsAction(
       updated,
     });
     return {
-      error: dict.admin.uploadImportFailed,
+      error: t(dict.superAdmin.scheduledMissionsWriteFailed, {
+        created,
+        detail: describeDbError(error),
+      }),
       created,
       updated,
     };

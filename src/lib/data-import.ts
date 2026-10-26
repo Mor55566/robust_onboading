@@ -555,6 +555,24 @@ export function buildCsvTemplate(headers: string[], rows: string[][]): string {
   return `\uFEFF${lines.join("\n")}\n`;
 }
 
+/**
+ * Rebuild an uploaded file as CSV keeping only the given rows (1-based, the
+ * header is row 1 — the same `rowNumber` the import parsers report). Every
+ * original column is kept, so the result can be uploaded again as is.
+ */
+export function buildCsvOfRows(
+  content: string,
+  fileName: string,
+  rowNumbers: number[],
+): string | null {
+  const raw = parseRawRows(content, fileName);
+  if ("error" in raw) return null;
+  const [header, ...rest] = raw.rows;
+  const wanted = new Set(rowNumbers);
+  const rows = rest.filter((_, index) => wanted.has(index + 2));
+  return buildCsvTemplate(header ?? [], rows);
+}
+
 export function buildExcelTemplate(
   sheetName: string,
   headers: string[],

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  buildCsvOfRows,
   buildEquipmentCsvTemplate,
   buildFloorsCsvTemplate,
   parseEquipmentImportContent,
   parseFloorsImportContent,
 } from "./data-import";
+import { parseTasksImportContent } from "./task-import";
 
 describe("floor import", () => {
   it("parses the Hebrew Visitt floors export format", () => {
@@ -92,5 +94,30 @@ describe("equipment import", () => {
     const result = parseEquipmentImportContent(buildEquipmentCsvTemplate(), "equipment.csv");
     assert.ok("rows" in result);
     assert.equal(result.rows.length, 2);
+  });
+});
+
+describe("failed rows CSV", () => {
+  it("keeps the header and only the requested file rows, re-parseable as is", () => {
+    const content = [
+      "תיאור,סטאטוס,מספר קריאה,עמודה נוספת",
+      "first,open,1,a",
+      '"second, with comma",סגור,2,b',
+      "",
+      "fourth,open,4,d",
+    ].join("\n");
+    // Row numbers count the header as row 1, like the import parsers.
+    const csv = buildCsvOfRows(content, "tickets.csv", [3, 5]);
+    assert.ok(csv);
+    const tasks = parseTasksImportContent(csv, "tickets-failed.csv");
+    assert.ok(!("error" in tasks), JSON.stringify(tasks));
+    assert.deepEqual(
+      tasks.rows.map((row) => [row.description, row.callNumber]),
+      [
+        ["second, with comma", "2"],
+        ["fourth", "4"],
+      ],
+    );
+    assert.ok(csv.includes("עמודה נוספת"));
   });
 });

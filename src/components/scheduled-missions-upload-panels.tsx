@@ -62,7 +62,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
         row.locations.length > 0 ? `${row.locations.length} locations` : null,
       ].filter(Boolean);
       return {
-        key: `mission-${row.externalId}`,
+        key: `mission-${row.rowNumber}`,
         label: row.title.slice(0, 80) || `Row ${row.rowNumber}`,
         detail: bits.join(" · ") || undefined,
         action: "create" as const,

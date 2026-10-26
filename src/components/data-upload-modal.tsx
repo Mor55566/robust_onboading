@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import type { Dictionary } from "@/i18n/dictionaries/en";
 import { t } from "@/i18n/t";
 import {
+  buildCsvOfRows,
   downloadTextFile,
   type ImportParseError,
 } from "@/lib/data-import";
@@ -30,6 +31,23 @@ export type ImportProgressCounts = {
   done: number;
   total: number;
 };
+
+/** A row the import skipped; `rowNumber` is the file row (header = 1). */
+export type ImportFailure = {
+  rowNumber: number;
+  label?: string;
+  error: string;
+};
+
+/**
+ * What onImport can resolve to: nothing (success, close), a blocking error, or
+ * a finished import where some rows failed — shown in a results view with a
+ * CSV of just those rows.
+ */
+export type ImportOutcome =
+  | void
+  | { error: string }
+  | { failures: ImportFailure[]; succeeded: number };
 
 export function DataUploadModal<T>({
   open,
@@ -77,9 +95,14 @@ export function DataUploadModal<T>({
       percent: number,
       counts?: ImportProgressCounts,
     ) => void,
-  ) => void | { error: string } | Promise<void | { error: string }>;
+  ) => ImportOutcome | Promise<ImportOutcome>;
 }) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [failureResult, setFailureResult] = useState<{
+    failures: ImportFailure[];
+    succeeded: number;
+  } | null>(null);
   const [parsedRows, setParsedRows] = useState<T[] | null>(null);
   const [previewRows, setPreviewRows] = useState<ImportPreviewRow[] | null>(
     null,
@@ -92,13 +115,16 @@ export function DataUploadModal<T>({
     null,
   );
   const [confirmingSkip, setConfirmingSkip] = useState(false);
+  const [showErrorRows, setShowErrorRows] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      if (showErrorRows) setShowErrorRows(false);
+      else onClose();
     }
 
     document.addEventListener("keydown", onKeyDown);
@@ -109,11 +135,13 @@ export function DataUploadModal<T>({
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
     };
-  }, [open, onClose]);
+  }, [open, onClose, showErrorRows]);
 
   useEffect(() => {
     if (open) return;
     setSelectedFile(null);
+    setFileContent(null);
+    setFailureResult(null);
     setParsedRows(null);
     setPreviewRows(null);
     setError(null);
@@ -122,6 +150,7 @@ export function DataUploadModal<T>({
     setImportProgress(null);
     setImportCounts(null);
     setConfirmingSkip(false);
+    setShowErrorRows(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, [open]);
 
@@ -152,26 +181,43 @@ export function DataUploadModal<T>({
     );
   }
 
+  function handleDownloadFailedRows() {
+    if (!failureResult || !selectedFile || fileContent == null) return;
+    const csv = buildCsvOfRows(
+      fileContent,
+      selectedFile.name,
+      failureResult.failures.map((failure) => failure.rowNumber),
+    );
+    if (csv == null) return;
+    const baseName = selectedFile.name.replace(/\.[^.]+$/, "");
+    downloadTextFile(`${baseName}-failed.csv`, csv, "text/csv;charset=utf-8");
+  }
+
   function clearSelectedFile() {
     setSelectedFile(null);
+    setFileContent(null);
     setParsedRows(null);
     setPreviewRows(null);
     setError(null);
     setConfirmingSkip(false);
+    setShowErrorRows(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   async function handleFileChange(file: File | null) {
     setSelectedFile(file);
+    setFileContent(null);
     setParsedRows(null);
     setPreviewRows(null);
     setError(null);
     setConfirmingSkip(false);
+    setShowErrorRows(false);
     if (!file) return;
 
     setIsReading(true);
     try {
       const content = await file.text();
+      setFileContent(content);
       const parsed = parse(content, file.name);
       if ("error" in parsed) {
         setError(
@@ -224,8 +270,12 @@ export function DataUploadModal<T>({
           });
         }
       });
-      if (result?.error) {
+      if (result && "error" in result) {
         setError(result.error);
+        return;
+      }
+      if (result && "failures" in result && result.failures.length > 0) {
+        setFailureResult(result);
         return;
       }
       if (lastProgress === 100) {
@@ -274,6 +324,9 @@ export function DataUploadModal<T>({
           </div>
         </div>
 
+        {failureResult ? (
+          <ImportFailuresView dict={dict} result={failureResult} />
+        ) : (
         <div className="space-y-4 overflow-y-auto px-5 py-4 sm:px-6">
           {extraFields}
 
@@ -331,12 +384,22 @@ export function DataUploadModal<T>({
                     skipCount > 0
                       ? t(dict.admin.uploadPreviewSummarySkipPart, { skip: skipCount })
                       : null,
-                    errorCount > 0
-                      ? t(dict.admin.uploadPreviewSummaryErrorPart, { error: errorCount })
-                      : null,
                   ]
                     .filter(Boolean)
                     .join(" · ")}
+                  {errorCount > 0 ? (
+                    <>
+                      {" · "}
+                      <button
+                        type="button"
+                        onClick={() => setShowErrorRows(true)}
+                        className="font-semibold underline underline-offset-2"
+                        style={{ color: "var(--danger)" }}
+                      >
+                        {t(dict.admin.uploadPreviewSummaryErrorPart, { error: errorCount })}
+                      </button>
+                    </>
+                  ) : null}
                 </p>
               </div>
 
@@ -346,6 +409,11 @@ export function DataUploadModal<T>({
                     <li
                       key={row.key}
                       className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm"
+                      style={
+                        row.action === "error"
+                          ? { background: "var(--danger-soft)", color: "var(--danger)" }
+                          : undefined
+                      }
                     >
                       <div className="min-w-0">
                         <p className="truncate font-medium">{row.label}</p>
@@ -396,6 +464,7 @@ export function DataUploadModal<T>({
             </p>
           ) : null}
         </div>
+        )}
 
         <div className="flex shrink-0 flex-col gap-3 border-t bg-[var(--surface)] px-5 py-4 sm:px-6">
           {isImporting ? (
@@ -433,7 +502,21 @@ export function DataUploadModal<T>({
               </div>
             </div>
           ) : null}
-          {confirmingSkip ? (
+          {failureResult ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={onClose} className="btn btn-secondary">
+                {dict.common.close}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadFailedRows}
+                disabled={fileContent == null}
+                className="btn btn-primary"
+              >
+                {dict.admin.uploadFailuresDownload}
+              </button>
+            </div>
+          ) : confirmingSkip ? (
             <div className="banner-error space-y-2" role="alertdialog">
               <p className="font-medium">{dict.admin.uploadConfirmSkipTitle}</p>
               <p>{t(dict.admin.uploadConfirmSkipBody, { count: errorCount })}</p>
@@ -480,8 +563,104 @@ export function DataUploadModal<T>({
           )}
         </div>
       </div>
+      {showErrorRows ? (
+        <div className="absolute inset-0 z-20 flex items-end justify-center sm:items-center sm:p-6">
+          <button
+            type="button"
+            aria-label={dict.common.close}
+            className="absolute inset-0 bg-black/30"
+            onClick={() => setShowErrorRows(false)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="data-upload-errors-title"
+            className="surface-card relative z-10 flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl shadow-xl sm:rounded-2xl"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-4">
+              <h3
+                id="data-upload-errors-title"
+                className="text-base font-semibold"
+                style={{ color: "var(--danger)" }}
+              >
+                {t(dict.admin.uploadPreviewSummaryErrorPart, { error: errorCount })}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowErrorRows(false)}
+                aria-label={dict.common.close}
+                className="flex size-9 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--text)]"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <ul className="divide-y overflow-y-auto">
+              {previewRows
+                ?.filter((row) => row.action === "error")
+                .map((row) => (
+                  <li key={row.key} className="px-5 py-2.5 text-sm">
+                    <p className="font-medium">{row.label}</p>
+                    {row.detail ? (
+                      <p
+                        className="mt-0.5 whitespace-pre-wrap break-words text-xs"
+                        style={{ color: "var(--danger)" }}
+                      >
+                        {row.detail}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+            </ul>
+          </div>
+        </div>
+      ) : null}
     </div>,
     document.body,
+  );
+}
+
+function ImportFailuresView({
+  dict,
+  result,
+}: {
+  dict: Dictionary;
+  result: { failures: ImportFailure[]; succeeded: number };
+}) {
+  return (
+    <div className="flex min-h-0 flex-col gap-3 px-5 py-4 sm:px-6">
+      <div className="banner-error space-y-1" role="alert">
+        <p className="font-semibold">{dict.admin.uploadFailuresTitle}</p>
+        <p>
+          {t(dict.admin.uploadFailuresSummary, {
+            succeeded: result.succeeded,
+            failed: result.failures.length,
+          })}
+        </p>
+      </div>
+      <p className="text-sm text-[var(--text-muted)]">
+        {dict.admin.uploadFailuresHint}
+      </p>
+      <ul className="max-h-[50vh] divide-y overflow-y-auto rounded-xl border">
+        {result.failures.map((failure) => (
+          <li key={failure.rowNumber} className="px-3 py-2.5 text-sm">
+            <p className="flex flex-wrap items-baseline gap-x-2 font-medium">
+              <span className="tabular-nums">
+                {t(dict.admin.uploadFailureRow, { row: failure.rowNumber })}
+              </span>
+              {failure.label ? (
+                <span className="text-[var(--text-muted)]">{failure.label}</span>
+              ) : null}
+            </p>
+            <p
+              className="mt-0.5 whitespace-pre-wrap break-words text-xs"
+              style={{ color: "var(--danger)" }}
+            >
+              {failure.error}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

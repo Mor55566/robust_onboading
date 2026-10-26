@@ -1,4 +1,5 @@
 import { sql } from "@/lib/db";
+import { DEFAULT_TASK_CATEGORIES } from "@/lib/default-categories";
 import { residentSql } from "@/lib/resident-db";
 import { usersSql } from "@/lib/users-db";
 import {
@@ -30,9 +31,12 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
           JOIN buildings b ON b.id = e.building_id
           WHERE b.complex_id = ${complexId}
         ) AS equipment,
+        -- Every complex is seeded with the default categories, so only a
+        -- category outside that list means categories were actually set up.
         EXISTS (
           SELECT 1 FROM task_categories
           WHERE complex_id = ${complexId}
+            AND NOT (name = ANY(${[...DEFAULT_TASK_CATEGORIES]}::text[]))
         ) AS categories,
         EXISTS (
           SELECT 1 FROM file_tags

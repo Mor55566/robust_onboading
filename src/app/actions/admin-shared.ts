@@ -28,7 +28,11 @@ import { getDictionary } from "@/i18n/get-dictionary";
 import { t } from "@/i18n/t";
 import { resolveEquipmentConditionId } from "@/lib/equipment-condition";
 import { resolveEquipmentTypeId } from "@/lib/equipment-types";
-import { getEquipmentTypes } from "@/lib/equipment-types-db";
+import {
+  createEquipmentType,
+  getEquipmentTypes,
+} from "@/lib/equipment-types-db";
+import type { EquipmentType } from "@/lib/equipment-types";
 import {
   planAreasImport,
   resolveExistingEquipmentLocation,
@@ -496,7 +500,27 @@ export async function importEquipmentAction(
     return { error: dict.errors.noBuildingAdmin };
   }
 
-  const equipmentTypes = await getEquipmentTypes();
+  // Equipment types are per complex, so each row resolves its type against
+  // its own building's complex.
+  const buildingComplexRows = await sql`
+    SELECT id, complex_id FROM buildings
+    WHERE id = ANY(${accessibleBuildings.map((building) => building.id)})
+  `;
+  const complexIdByBuilding = new Map(
+    buildingComplexRows.map((row) => [row.id as string, row.complex_id as string]),
+  );
+  const typeComplexIds = [...new Set(complexIdByBuilding.values())];
+  const typesByComplex = new Map<string, EquipmentType[]>(
+    await Promise.all(
+      typeComplexIds.map(
+        async (id) => [id, await getEquipmentTypes(id)] as [string, EquipmentType[]],
+      ),
+    ),
+  );
+  // Unknown type labels become new types in the row's complex. Until they are
+  // created, rows carry a placeholder id (never a valid slug: it has a colon).
+  const newTypes = new Map<string, { complexId: string; label: string }>();
+  const NEW_TYPE_PREFIX = "new-type:";
 
   const buildingsByName = new Map(
     accessibleBuildings.map((building) => [
@@ -594,10 +618,16 @@ export async function importEquipmentAction(
     }
 
     const typeRaw = row.equipmentType?.trim() ?? "";
-    const equipmentType = resolveEquipmentTypeId(equipmentTypes, typeRaw);
+    const rowComplexId = complexIdByBuilding.get(buildingId) ?? "";
+    let equipmentType = resolveEquipmentTypeId(
+      typesByComplex.get(rowComplexId) ?? [],
+      typeRaw,
+    );
     if (typeRaw && !equipmentType) {
-      rowIssues.push({ rowNumber, message: ctx.dict.errors.selectEquipmentType });
-      continue;
+      equipmentType = `${NEW_TYPE_PREFIX}${rowComplexId}:${typeRaw.toLowerCase()}`;
+      if (!newTypes.has(equipmentType)) {
+        newTypes.set(equipmentType, { complexId: rowComplexId, label: typeRaw });
+      }
     }
 
     const advanced = parseEquipmentAdvancedFields({
@@ -892,12 +922,26 @@ export async function importEquipmentAction(
     }
   }
 
+  // Only types that an imported (not skipped / name-only) row needs.
+  const usedNewTypeKeys = new Set(
+    planned
+      .filter((item) => item.action !== "skip" && !item.nameOnly)
+      .map((item) => item.equipmentType)
+      .filter((type): type is string => !!type && newTypes.has(type)),
+  );
+
   const preview: Array<{
     key: string;
     label: string;
     detail: string;
     action: "create" | "update" | "skip" | "error";
   }> = [
+    ...[...usedNewTypeKeys].map((key) => ({
+      key: `equipment-type-${key}`,
+      label: newTypes.get(key)!.label,
+      detail: dict.admin.equipmentUploadPreviewNewType,
+      action: "create" as const,
+    })),
     ...planned.map((item, index) => ({
       key: `equipment-${item.id}-${index}`,
       label: item.name,
@@ -944,6 +988,33 @@ export async function importEquipmentAction(
       skipped: rowIssues.length,
     };
   }
+  const createdTypeIds = new Map<string, string>();
+  for (const key of usedNewTypeKeys) {
+    const { complexId: typeComplexId, label } = newTypes.get(key)!;
+    try {
+      const created = await createEquipmentType({
+        complexId: typeComplexId,
+        en: label,
+        he: label,
+        ru: label,
+      });
+      createdTypeIds.set(key, created.id);
+    } catch (error) {
+      console.error("importEquipmentAction type create failed:", label, error);
+      return {
+        error: t(dict.admin.equipmentUploadTypeCreateFailed, {
+          name: label,
+          detail: describeDbError(error, dict),
+        }),
+      };
+    }
+  }
+  for (const item of importedItems) {
+    if (item.equipmentType && newTypes.has(item.equipmentType)) {
+      item.equipmentType = createdTypeIds.get(item.equipmentType) ?? null;
+    }
+  }
+
   const queries = importedItems.map((item) => {
     if (item.action === "update") {
       if (item.nameOnly) {
@@ -1042,12 +1113,8 @@ export async function importEquipmentAction(
     results = await sql.transaction(queries);
   } catch (error) {
     console.error("importEquipmentAction failed:", error);
-    const dbError = error as { message?: string; detail?: string };
-    const detail = dbError.detail || dbError.message;
     return {
-      error: detail
-        ? `${dict.admin.equipmentUploadFailed} (${detail})`
-        : dict.admin.equipmentUploadFailed,
+      error: `${dict.admin.equipmentUploadFailed} ${describeDbError(error, dict)}`,
     };
   }
   const equipment = results.flat().map((row, index) => {
@@ -1094,4 +1161,21 @@ export async function importEquipmentAction(
     updated,
     skipped: rowIssues.length,
   };
+}
+
+/** A readable reason for a failed equipment-import query. */
+function describeDbError(
+  error: unknown,
+  dict: { admin: { equipmentUploadNoPermission: string; equipmentUploadUnknownError: string } },
+): string {
+  const dbError = (error ?? {}) as { message?: string; detail?: string; code?: string };
+  // 42501: insufficient_privilege, raised by row-level security.
+  if (dbError.code === "42501" || /row-level security/i.test(dbError.message ?? "")) {
+    return dict.admin.equipmentUploadNoPermission;
+  }
+  return (
+    dbError.detail?.trim() ||
+    dbError.message?.trim() ||
+    dict.admin.equipmentUploadUnknownError
+  );
 }

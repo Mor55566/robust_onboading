@@ -11,6 +11,7 @@ import { t } from "@/i18n/t";
 import {
   buildUsersCsvTemplate,
   buildUsersExcelTemplate,
+  isVisittUser,
   parseUsersImportContent,
   type UserImportRow,
 } from "@/lib/user-import";
@@ -19,22 +20,28 @@ export function UsersUploadPanels({ dict }: { dict: Dictionary }) {
   const { complexId, uploadStatus, refreshUploadStatus } = useComplexContext();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [createUserOpen, setCreateUserOpen] = useState(false);
-  const [password, setPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
 
   function preview(rows: UserImportRow[]): ImportPreviewRow[] {
-    return rows.map((row) => ({
-      key: `${row.email}-${row.rowNumber}`,
-      label: row.fullName,
-      detail: `${row.email} · ${row.sourceRole === "מנהל נכס" ? dict.roles.admin : dict.roles.user}`,
-      action: "create",
-    }));
+    return rows.map((row) => {
+      const visitt = isVisittUser(row);
+      const role = row.sourceRole === "מנהל נכס" ? dict.roles.admin : dict.roles.user;
+      return {
+        key: `${row.email}-${row.rowNumber}`,
+        label: row.fullName,
+        detail: visitt
+          ? `${row.email} · ${dict.superAdmin.usersUploadVisittSkipped}`
+          : `${row.email} · ${role}`,
+        action: visitt ? "skip" : "create",
+      };
+    });
   }
 
   async function handleImport(rows: UserImportRow[]) {
     setMessage(null);
-    if (password.length < 8) return { error: dict.errors.passwordMin };
-    const result = await importUsersAction(complexId, password, rows);
+    const importable = rows.filter((row) => !isVisittUser(row));
+    if (importable.length === 0) return { error: dict.superAdmin.usersUploadEmpty };
+    const result = await importUsersAction(complexId, importable);
     if (result.error) return { error: result.error };
     setMessage(result.success ?? t(dict.superAdmin.usersUploadSuccess, {
       create: result.created ?? 0,
@@ -61,22 +68,6 @@ export function UsersUploadPanels({ dict }: { dict: Dictionary }) {
         {!complexId ? <NoComplexSelectedHint /> : null}
       </section>
       <section className="surface-card space-y-4 p-5">
-        <div className="space-y-1.5">
-          <label htmlFor="user-import-password" className="field-label">
-            {dict.superAdmin.usersImportPassword}
-          </label>
-          <input
-            id="user-import-password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            minLength={8}
-            autoComplete="new-password"
-            className="max-w-md"
-            placeholder={dict.superAdmin.usersImportPasswordPlaceholder}
-          />
-          <p className="text-xs text-[var(--text-muted)]">{dict.superAdmin.usersImportPasswordHint}</p>
-        </div>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -85,7 +76,7 @@ export function UsersUploadPanels({ dict }: { dict: Dictionary }) {
             </div>
             <p className="text-sm text-[var(--text-muted)]">{dict.superAdmin.usersUploadSubtitle}</p>
           </div>
-          <button type="button" className="btn btn-primary shrink-0" disabled={!complexId || password.length < 8} onClick={() => setUploadOpen(true)}>
+          <button type="button" className="btn btn-primary shrink-0" disabled={!complexId} onClick={() => setUploadOpen(true)}>
             {dict.admin.uploadData}
           </button>
         </div>

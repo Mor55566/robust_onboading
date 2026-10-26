@@ -49,7 +49,10 @@ export const MISSION_IMPORT_HEADERS = [
 
 export type MissionImportRow = {
   rowNumber: number;
+  /** Stable id from the source system, or "" when the file has none. */
   externalId: string;
+  /** Groups the file rows (one per checklist item) that form one mission. */
+  groupKey?: string;
   title: string;
   frequency: string;
   skipHolidays: boolean;
@@ -533,9 +536,10 @@ export function parseMissionsImportContent(
     "מזהה",
     "external id",
     "external_id",
-    "source_index",
-    "source index",
   ]);
+  // source_index is just the row's position in the export (1, 2, 3…), so it
+  // only groups rows within this file and is never stored as external_id.
+  const sourceIndexIndex = findHeaderIndex(header, ["source_index", "source index"]);
   const titleIndex = findHeaderIndex(header, ["שם", "name", "title", "assignment_name", "assignment name"]);
   const frequencyIndex = findHeaderIndex(header, ["תדירות", "frequency"]);
   const skipHolidaysIndex = findHeaderIndex(header, [
@@ -578,7 +582,7 @@ export function parseMissionsImportContent(
   const numberMaxIndex = findHeaderIndex(header, ["number_max", "number max"]);
   const optionsIndex = findHeaderIndex(header, ["options"]);
 
-  if (externalIdIndex < 0 || titleIndex < 0) {
+  if ((externalIdIndex < 0 && sourceIndexIndex < 0) || titleIndex < 0) {
     return { error: "invalid", message: "__missing_required__" };
   }
 
@@ -589,9 +593,13 @@ export function parseMissionsImportContent(
     if (cells.every((cell) => !cell.trim())) continue;
 
     const rowNumber = i + 1;
-    const externalId = (cells[externalIdIndex] ?? "").trim();
+    const externalId =
+      externalIdIndex >= 0 ? (cells[externalIdIndex] ?? "").trim() : "";
+    const groupKey =
+      externalId ||
+      (sourceIndexIndex >= 0 ? (cells[sourceIndexIndex] ?? "").trim() : "");
     const title = (cells[titleIndex] ?? "").trim();
-    if (!externalId || !title) {
+    if (!groupKey || !title) {
       return {
         error: "invalidRow",
         message: `__row__:${rowNumber}`,
@@ -667,6 +675,7 @@ export function parseMissionsImportContent(
       rowNumber,
       skipHolidays,
       externalId,
+      groupKey,
       title,
       frequency:
         frequencyIndex >= 0 ? (cells[frequencyIndex] ?? "").trim() : "",
@@ -696,7 +705,7 @@ export function parseMissionsImportContent(
       checklistItems,
     };
 
-    const existing = groupedRows.get(externalId);
+    const existing = groupedRows.get(groupKey);
     if (existing) {
       if (existing.skipHolidays !== skipHolidays) {
         return { error: "invalidRow", message: `__row__:${rowNumber}` };
@@ -709,7 +718,7 @@ export function parseMissionsImportContent(
         ...new Set([...existing.assignees, ...parsedRow.assignees]),
       ];
     } else {
-      groupedRows.set(externalId, parsedRow);
+      groupedRows.set(groupKey, parsedRow);
       rows.push(parsedRow);
     }
   }

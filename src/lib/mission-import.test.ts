@@ -34,6 +34,17 @@ describe("scheduled missions CSV import", () => {
     }
   });
 
+  it("groups by source_index without storing it as the external id", () => {
+    const parsed = parseMissionsImportContent(
+      "source_index,assignment_name,checklist_name\n1,בדיקה,ראשונה\n1,בדיקה,שנייה\n2,אחרת,בדוק",
+      "export.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+    assert.equal(parsed.rows.length, 2);
+    assert.equal(parsed.rows[0]?.externalId, "");
+    assert.equal(parsed.rows[0]?.checklistItems.length, 2);
+  });
+
   it("defaults missing holiday columns to false", () => {
     const parsed = parseMissionsImportContent(
       "source_index,assignment_name\n1,בדיקה", "legacy.csv",

@@ -13,8 +13,10 @@ import { CategoriesUploadPanels } from "@/components/categories-upload-panels";
 import { useComplexContext } from "@/components/complex-context";
 import {
   DataUploadModal,
+  type ImportFailure,
   type ImportPreviewRow,
 } from "@/components/data-upload-modal";
+import { DevtoolsScriptGuideModal } from "@/components/devtools-script-guide-modal";
 import { UploadCard, UploadMessage } from "@/components/upload-card";
 import type { Dictionary } from "@/i18n/dictionaries/en";
 import { t } from "@/i18n/t";
@@ -34,12 +36,14 @@ import {
   parseAutomationsImportContent,
   type AutomationImportRow,
 } from "@/lib/automation-import";
+import { AUTOMATION_EXPORT_SCRIPT } from "@/lib/automation-export-script";
 
 export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
   const { complexId, checkBuildingNames, guardDirectoryReady, uploadStatus, refreshUploadStatus } =
     useComplexContext();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [automationsUploadOpen, setAutomationsUploadOpen] = useState(false);
+  const [automationsGuideOpen, setAutomationsGuideOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [message, setMessage] = useState<{
     type: "success" | "error";
@@ -76,20 +80,59 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
     const BATCH_SIZE = 20;
     let created = 0;
     let updated = 0;
+    const failures: ImportFailure[] = [];
+    const callNumberByRow = new Map(
+      rows.map((row) => [row.rowNumber, row.callNumber.trim()]),
+    );
+    const failureLabel = (callNumber: string | null | undefined) =>
+      callNumber
+        ? t(dict.admin.uploadFailureCallNumber, { callNumber })
+        : undefined;
 
+    // One bad row (or batch) must not stop the other rows: collect failures
+    // and report them all at the end.
     for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
       const batch = rows.slice(offset, offset + BATCH_SIZE);
-      const result = await importTasksAction(complexId, batch);
-      created += result.created ?? 0;
-      updated += result.updated ?? 0;
+      let batchError: string | null = null;
+      try {
+        const result = await importTasksAction(complexId, batch);
+        created += result.created ?? 0;
+        updated += result.updated ?? 0;
+        for (const failure of result.failures ?? []) {
+          failures.push({
+            rowNumber: failure.rowNumber,
+            label: failureLabel(failure.callNumber),
+            error: failure.error,
+          });
+        }
+        if (result.error) batchError = result.error;
+      } catch (error) {
+        batchError =
+          error instanceof Error && error.message
+            ? `${dict.admin.uploadImportFailed} (${error.message})`
+            : dict.admin.uploadImportFailed;
+      }
 
-      if (result.error) {
-        return { error: result.error };
+      if (batchError) {
+        for (const row of batch) {
+          failures.push({
+            rowNumber: row.rowNumber,
+            label: failureLabel(callNumberByRow.get(row.rowNumber)),
+            error: batchError,
+          });
+        }
       }
 
       reportProgress(
         (Math.min(offset + batch.length, rows.length) / rows.length) * 100,
       );
+    }
+
+    void refreshUploadStatus();
+
+    if (failures.length > 0) {
+      failures.sort((a, b) => a.rowNumber - b.rowNumber);
+      return { failures, succeeded: created + updated };
     }
 
     const success =
@@ -100,7 +143,6 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
       type: "success",
       text: success,
     });
-    void refreshUploadStatus();
   }
 
   function previewAutomationRows(rows: AutomationImportRow[]): ImportPreviewRow[] {
@@ -151,6 +193,8 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         disabled={!complexId}
         done={complexId ? uploadStatus?.automations : undefined}
         stepNumber={3}
+        guideLabel={dict.superAdmin.fileTagsImportGuideButton}
+        onGuide={() => setAutomationsGuideOpen(true)}
       />
 
       <section className="surface-card space-y-4 p-5">
@@ -230,6 +274,21 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         preview={previewAutomationRows}
         onClose={() => setAutomationsUploadOpen(false)}
         onImport={handleAutomationsImport}
+      />
+      <DevtoolsScriptGuideModal
+        open={automationsGuideOpen}
+        dict={dict}
+        script={AUTOMATION_EXPORT_SCRIPT}
+        copy={{
+          title: dict.superAdmin.automationsImportGuideTitle,
+          intro: dict.superAdmin.automationsImportGuideIntro,
+          step1Title: dict.superAdmin.automationsImportGuideStep1Title,
+          step1Body: dict.superAdmin.automationsImportGuideStep1Body,
+          step4Title: dict.superAdmin.automationsImportGuideStep4Title,
+          step4Body: dict.superAdmin.automationsImportGuideStep4Body,
+          scriptNote: dict.superAdmin.automationsImportGuideScriptNote,
+        }}
+        onClose={() => setAutomationsGuideOpen(false)}
       />
       <DeleteTicketsModal
         open={deleteOpen}

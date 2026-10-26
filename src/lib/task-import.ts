@@ -45,6 +45,8 @@ export type TaskImportRow = {
   description: string;
   urgency: TaskUrgency;
   status: TaskStatus;
+  /** False when the status cell was empty — existing tickets keep their status. */
+  statusProvided?: boolean;
   createdAt: string | null;
   dueAt: string | null;
   building: string;
@@ -267,6 +269,7 @@ export function parseTasksImportContent(
       description,
       urgency: parseUrgency(urgencyRaw),
       status: parseStatus(statusRaw),
+      statusProvided: statusRaw !== "",
       createdAt: parseImportDate(createdRaw),
       dueAt: parseImportDate(dueRaw),
       building: buildingIndex >= 0 ? (cells[buildingIndex] ?? "").trim() : "",
@@ -274,8 +277,11 @@ export function parseTasksImportContent(
       category: categoryIndex >= 0 ? (cells[categoryIndex] ?? "").trim() : "",
       subcategory:
         subcategoryIndex >= 0 ? (cells[subcategoryIndex] ?? "").trim() : "",
+      // Spreadsheets often export whole numbers as "453055.0".
       callNumber:
-        callNumberIndex >= 0 ? (cells[callNumberIndex] ?? "").trim() : "",
+        callNumberIndex >= 0
+          ? (cells[callNumberIndex] ?? "").trim().replace(/^(\d+)\.0+$/, "$1")
+          : "",
       reporter: reporterIndex >= 0 ? (cells[reporterIndex] ?? "").trim() : "",
       assignees: splitNames(assigneesRaw),
       imageUrls: splitUrls(imagesRaw),
@@ -530,6 +536,7 @@ export type ResolvedTaskImportRow = {
   description: string;
   urgency: TaskUrgency;
   status: TaskStatus;
+  statusProvided: boolean;
   createdAt: string | null;
   dueAt: string | null;
   callNumber: string | null;
@@ -712,6 +719,7 @@ export function resolveTaskImportRows(options: {
       description: row.description,
       urgency: row.urgency,
       status: row.status,
+      statusProvided: row.statusProvided ?? true,
       createdAt: row.createdAt,
       dueAt: row.dueAt,
       callNumber: row.callNumber.trim() || null,

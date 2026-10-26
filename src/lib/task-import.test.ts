@@ -19,6 +19,19 @@ describe("tasks CSV import", () => {
     assert.equal(parsed.rows[0]?.callNumber, "453055");
   });
 
+  it("marks rows with an empty status cell so updates keep the existing status", () => {
+    const csv = [
+      "תיאור,סטאטוס,מספר קריאה",
+      "נסגרה,סגורה,453055",
+      "בלי סטאטוס,,453056",
+    ].join("\n");
+    const parsed = parseTasksImportContent(csv, "tasks.csv");
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+    assert.equal(parsed.rows[0]?.status, "closed");
+    assert.equal(parsed.rows[0]?.statusProvided, true);
+    assert.equal(parsed.rows[1]?.statusProvided, false);
+  });
+
   it("parses Visitt headers with Hebrew gershayim quotes", () => {
     const csv = [
       "תיאור,דחיפות,סטאטוס,תאריך יצירה,בניין,מיקום,מספר קריאה,נסגר ע\"י",

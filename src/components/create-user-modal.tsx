@@ -77,20 +77,6 @@ export function CreateUserModal({
               <option value="admin">{dict.roles.admin}</option>
             </select>
           </div>
-          <div className="space-y-1.5">
-            <label htmlFor="new-user-password" className="field-label">
-              {dict.superAdmin.createUserPasswordLabel}
-            </label>
-            <input
-              id="new-user-password"
-              name="password"
-              type="password"
-              minLength={8}
-              autoComplete="new-password"
-              required
-              placeholder={dict.superAdmin.usersImportPasswordPlaceholder}
-            />
-          </div>
           {state.error ? (
             <p className="banner-error" role="alert">
               {state.error}

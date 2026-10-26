@@ -86,6 +86,8 @@ export const en = {
     uploadSuccessDetailed:
       "Imported {created} new tasks, updated {updated}",
     uploadRowError: "Row {row}: {message}",
+    invalidCallNumber:
+      "ticket number \"{callNumber}\" is not valid. Ticket numbers must contain digits only.",
     automationsUploadTitle: "Upload automations",
     automationsUploadSubtitle: "Select a complex and upload the automations file. Paths separated by > are resolved as building → category → subcategory. Rows with missing +N values are blocked to prevent partial imports.",
     automationsUploadEmpty: "The file has no automation rows.",
@@ -93,6 +95,20 @@ export const en = {
     automationsUploadInvalidRow: "An automation row is invalid.",
     automationsUploadFailed: "Could not import the automations.",
     automationsUploadSuccess: "Imported {created} new automations and updated {updated} automations.",
+    automationsImportGuideTitle:
+      "Export automations from Visitt",
+    automationsImportGuideIntro:
+      "Follow these steps to export the automations from Visitt to a CSV file, then upload it here.",
+    automationsImportGuideStep1Title:
+      "Open the Automation tab in Visitt",
+    automationsImportGuideStep1Body:
+      "Sign in to Visitt, open the tasks page and switch to the “Automation” tab so the automations list is visible. Make sure no automation dialog is open.",
+    automationsImportGuideStep4Title:
+      "Paste and run the script",
+    automationsImportGuideStep4Body:
+      "Copy the script below, paste it into the Console and press Enter. It opens each automation read-only, collects its conditions and users, closes it, and finally downloads automations-YYYY-MM-DD.csv automatically — upload that file with the “Upload data” button. Don't click the page while it runs; progress is shown in the Console.",
+    automationsImportGuideScriptNote:
+      "This script is also saved in the project at scripts/export_automations.js.",
     floorsUploadTitle: "Upload floors",
     floorsUploadSubtitle:
       "Choose the building, then upload CSV or Excel in the provided format. Existing floors are updated by id or level.",
@@ -169,6 +185,12 @@ export const en = {
     scheduledMissionsUploadTitle: "Upload scheduled missions",
     scheduledMissionsUploadSubtitle:
       "Download the template, fill in your scheduled missions, then upload. מזהה is saved as external id. Locations (מיקומים) are resolved like other imports. The בדיקות column and fields without a database column are ignored.",
+    externalIdInUse:
+      "ID {externalId} is already used by {type} \"{title}\" in complex {complex}. IDs must be unique across the whole system — remove the row or change its ID.",
+    scheduledMissionsWriteFailed: "Saving the scheduled missions failed after {created} were created ({detail}). Fix the problem and upload again — rows already saved will be updated, not duplicated.",
+    externalIdTypeTask: "a ticket",
+    externalIdTypeMission: "a mission",
+    externalIdTypeTemplate: "a scheduled mission",
     scheduledMissionsUploadEmpty: "The file has no scheduled mission rows.",
     scheduledMissionsUploadInvalid:
       "Could not read this file. Use the CSV or Excel template.",
@@ -326,6 +348,7 @@ export const en = {
     usersSelectComplex: "Complex",
     usersUploadEmpty: "The file has no user rows.",
     usersUploadInvalid: "Could not read this file. Required columns are id, name, email, and role.",
+    usersUploadVisittSkipped: "Visitt user — will not be uploaded",
     usersUploadInvalidRow: "A row has invalid or duplicate data. ID, name, email, and role are required; phone and role description must be whole numbers when provided.",
     usersUploadSuccess: "Imported users: {create} new · {update} updates",
     usersUploadFailed: "Could not import users",
@@ -1258,6 +1281,13 @@ export const en = {
     uploadImporting: "Importing…",
     uploadProgressCounts: "Uploaded {done} of {total} · {remaining} remaining",
     uploadImportFailed: "Import failed. Please try again or contact support.",
+    uploadFailuresTitle: "Import finished with errors",
+    uploadFailuresSummary: "{succeeded} rows imported, {failed} failed",
+    uploadFailuresHint:
+      "The rows below were not imported. Download them as a CSV, fix them if needed, and upload that file again.",
+    uploadFailureRow: "Row {row}",
+    uploadFailureCallNumber: "Ticket #{callNumber}",
+    uploadFailuresDownload: "Download failed rows (CSV)",
     uploadConfirm: "Confirm import",
     uploadReviewing: "Reading file…",
     uploadPreviewTitle: "What will happen",
@@ -1318,6 +1348,9 @@ export const en = {
     equipmentUploadedMixed:
       "Added {create} new equipment items, updated {update}.",
     equipmentUploadEmpty: "No equipment rows found in the file.",
+    equipmentUploadTypeCreateFailed: "Could not create the equipment type \"{name}\": {detail}",
+    equipmentUploadNoPermission: "You don't have permission to make this change in this complex.",
+    equipmentUploadUnknownError: "Unknown error. Try again or contact support.",
     equipmentUploadFailed: "The equipment could not be imported.",
     equipmentUploadInvalid:
       "Could not read this file. Download the CSV or Excel template and try again.",
@@ -1336,6 +1369,7 @@ export const en = {
     equipmentUploadPreviewFloor: "Floor: {name}",
     equipmentUploadPreviewArea: "Floor: {floor} · Area: {area}",
     equipmentUploadPreviewBuilding: "{building} · {detail}",
+    equipmentUploadPreviewNewType: "New equipment type",
     equipmentUploadPreviewChangeName: "name: {from} → {to}",
     equipmentNeedsNameAndLocation: "Enter a name and select a location to save.",
     areaAdd: "New area",

@@ -88,6 +88,8 @@ export const ru: Dictionary = {
     uploadSuccessDetailed:
       "Импортировано новых заявок: {created}, обновлено: {updated}",
     uploadRowError: "Строка {row}: {message}",
+    invalidCallNumber:
+      "номер заявки \"{callNumber}\" недействителен. Номер заявки должен содержать только цифры.",
     automationsUploadTitle: "Загрузка автоматизаций",
     automationsUploadSubtitle: "Выберите комплекс и загрузите файл автоматизаций. Пути, разделённые символом >, разрешаются как здание → категория → подкатегория. Строки с отсутствующими значениями +N блокируются, чтобы предотвратить частичный импорт.",
     automationsUploadEmpty: "В файле нет строк автоматизаций.",
@@ -95,6 +97,20 @@ export const ru: Dictionary = {
     automationsUploadInvalidRow: "Строка автоматизации недействительна.",
     automationsUploadFailed: "Не удалось импортировать автоматизации.",
     automationsUploadSuccess: "Импортировано новых автоматизаций: {created}, обновлено: {updated}.",
+    automationsImportGuideTitle:
+      "Экспорт автоматизаций из Visitt",
+    automationsImportGuideIntro:
+      "Выполните следующие шаги, чтобы экспортировать автоматизации из Visitt в CSV-файл, а затем загрузите его здесь.",
+    automationsImportGuideStep1Title:
+      "Откройте вкладку «Автоматизация» в Visitt",
+    automationsImportGuideStep1Body:
+      "Войдите в Visitt, откройте страницу задач и перейдите на вкладку «Автоматизация», чтобы отобразился список автоматизаций. Убедитесь, что ни одно окно автоматизации не открыто.",
+    automationsImportGuideStep4Title:
+      "Вставьте и запустите скрипт",
+    automationsImportGuideStep4Body:
+      "Скопируйте скрипт ниже, вставьте его в Console и нажмите Enter. Скрипт откроет каждую автоматизацию только для чтения, соберёт условия и пользователей, закроет её и в конце автоматически скачает automations-YYYY-MM-DD.csv — загрузите этот файл кнопкой «Загрузить данные». Не нажимайте на страницу во время работы; прогресс отображается в Console.",
+    automationsImportGuideScriptNote:
+      "Этот скрипт также сохранён в проекте по пути scripts/export_automations.js.",
     floorsUploadTitle: "Загрузка этажей",
     floorsUploadSubtitle:
       "Выберите здание, затем загрузите CSV или Excel в указанном формате. Существующие этажи обновляются по id или уровню.",
@@ -171,6 +187,12 @@ export const ru: Dictionary = {
     scheduledMissionsUploadTitle: "Загрузка запланированных задач",
     scheduledMissionsUploadSubtitle:
       "Скачайте шаблон, заполните запланированные задачи и загрузите. מזהה сохраняется как внешний id. Местоположения (מיקומים) разрешаются так же, как при других импортах. Столбец בדיקות и поля без столбца в базе данных игнорируются.",
+    externalIdInUse:
+      "ID {externalId} уже используется: {type} \"{title}\" в комплексе {complex}. ID должен быть уникальным во всей системе — удалите строку или измените ID.",
+    scheduledMissionsWriteFailed: "Не удалось сохранить запланированные задачи после создания {created} ({detail}). Исправьте проблему и загрузите снова — уже сохранённые строки будут обновлены, а не продублированы.",
+    externalIdTypeTask: "заявка",
+    externalIdTypeMission: "задача",
+    externalIdTypeTemplate: "запланированная задача",
     scheduledMissionsUploadEmpty: "В файле нет строк с запланированными задачами.",
     scheduledMissionsUploadInvalid:
       "Не удалось прочитать файл. Используйте шаблон CSV или Excel.",
@@ -329,6 +351,7 @@ export const ru: Dictionary = {
     usersSelectComplex: "Комплекс",
     usersUploadEmpty: "В файле нет строк с пользователями.",
     usersUploadInvalid: "Не удалось прочитать файл. Обязательные столбцы: id, name, email и role.",
+    usersUploadVisittSkipped: "Пользователь Visitt — не будет загружен",
     usersUploadInvalidRow: "В строке есть недействительные или дублирующиеся данные. Обязательны id, name, email и role; phone и role description при указании должны быть целыми числами.",
     usersUploadSuccess: "Импортировано пользователей: {create} новых · {update} обновлений",
     usersUploadFailed: "Не удалось импортировать пользователей",
@@ -1261,6 +1284,13 @@ export const ru: Dictionary = {
     uploadImporting: "Импорт…",
     uploadProgressCounts: "Загружено {done} из {total} · осталось {remaining}",
     uploadImportFailed: "Импорт не удался. Попробуйте ещё раз или обратитесь в поддержку.",
+    uploadFailuresTitle: "Импорт завершён с ошибками",
+    uploadFailuresSummary: "Импортировано строк: {succeeded}, с ошибкой: {failed}",
+    uploadFailuresHint:
+      "Строки ниже не импортированы. Скачайте их в CSV, при необходимости исправьте и загрузите этот файл снова.",
+    uploadFailureRow: "Строка {row}",
+    uploadFailureCallNumber: "Заявка #{callNumber}",
+    uploadFailuresDownload: "Скачать строки с ошибками (CSV)",
     uploadConfirm: "Подтвердить импорт",
     uploadReviewing: "Чтение файла…",
     uploadPreviewTitle: "Что произойдёт",
@@ -1321,6 +1351,9 @@ export const ru: Dictionary = {
     equipmentUploadedMixed:
       "Добавлено новых единиц оборудования: {create}, обновлено: {update}.",
     equipmentUploadEmpty: "В файле не найдено строк с оборудованием.",
+    equipmentUploadTypeCreateFailed: "Не удалось создать тип оборудования «{name}»: {detail}",
+    equipmentUploadNoPermission: "У вас нет прав на это изменение в этом комплексе.",
+    equipmentUploadUnknownError: "Неизвестная ошибка. Попробуйте ещё раз или обратитесь в поддержку.",
     equipmentUploadFailed: "Не удалось импортировать оборудование.",
     equipmentUploadInvalid:
       "Не удалось прочитать файл. Скачайте шаблон CSV или Excel и попробуйте снова.",
@@ -1339,6 +1372,7 @@ export const ru: Dictionary = {
     equipmentUploadPreviewFloor: "Этаж: {name}",
     equipmentUploadPreviewArea: "Этаж: {floor} · Зона: {area}",
     equipmentUploadPreviewBuilding: "{building} · {detail}",
+    equipmentUploadPreviewNewType: "Новый тип оборудования",
     equipmentUploadPreviewChangeName: "название: {from} → {to}",
     equipmentNeedsNameAndLocation: "Введите название и выберите местоположение для сохранения.",
     areaAdd: "Новая зона",

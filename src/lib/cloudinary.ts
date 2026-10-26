@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { v2 as cloudinary, type UploadApiResponse } from "cloudinary";
 import {
@@ -25,9 +26,13 @@ export class CloudinaryConfigError extends Error {
 }
 
 export class CloudinaryUploadError extends Error {
-  constructor(message: string) {
+  /** False when retrying can't help (bad source file, missing permission). */
+  readonly retryable: boolean;
+
+  constructor(message: string, options?: { retryable?: boolean }) {
     super(message);
     this.name = "CloudinaryUploadError";
+    this.retryable = options?.retryable ?? true;
   }
 }
 
@@ -126,6 +131,7 @@ function toUploadError(error: unknown): Error {
   if (/missing permissions|actions=\["create"\]/i.test(message)) {
     return new CloudinaryUploadError(
       "Cloudinary API key is missing upload permission. Enable Create/Upload on the key, or set CLOUDINARY_UPLOAD_PRESET to an unsigned upload preset.",
+      { retryable: false },
     );
   }
 
@@ -273,6 +279,19 @@ function mimeFromContentType(contentType: string | null, fileName: string): stri
 const REMOTE_DOWNLOAD_TIMEOUT_MS = 30_000;
 const REMOTE_UPLOAD_TIMEOUT_MS = 90_000;
 
+/** Stable public_id for an imported file, derived from its source URL. */
+function importPublicId(
+  url: string,
+  fileName: string,
+  resourceType: "image" | "video" | "raw",
+): string {
+  const hash = createHash("sha256").update(url).digest("hex").slice(0, 40);
+  // Raw assets keep their extension in the public_id; images/videos don't.
+  const extension =
+    resourceType === "raw" ? (fileName.match(/\.[a-z0-9]+$/i)?.[0] ?? "") : "";
+  return `import-${hash}${extension}`;
+}
+
 async function uploadAttachmentFromUrl(
   url: string,
   mode: UploadMode,
@@ -288,6 +307,13 @@ async function uploadAttachmentFromUrl(
     if (!response.ok) {
       throw new CloudinaryUploadError(
         `Could not download image (${response.status}): ${url}`,
+        // 4xx (other than timeout / rate limit) won't fix itself on retry.
+        {
+          retryable:
+            response.status >= 500 ||
+            response.status === 408 ||
+            response.status === 429,
+        },
       );
     }
     buffer = Buffer.from(await response.arrayBuffer());
@@ -308,13 +334,16 @@ async function uploadAttachmentFromUrl(
     fileName,
   );
   if (buffer.byteLength === 0) {
-    throw new CloudinaryUploadError(`Empty image download: ${url}`);
+    throw new CloudinaryUploadError(`Empty image download: ${url}`, {
+      retryable: false,
+    });
   }
   // Imports may include larger Visitt photos than the form upload limit.
   const maxRemoteBytes = Math.max(MAX_ATTACHMENT_BYTES, 12 * 1024 * 1024);
   if (buffer.byteLength > maxRemoteBytes) {
     throw new CloudinaryUploadError(
       `Image exceeds ${maxRemoteBytes} bytes: ${url}`,
+      { retryable: false },
     );
   }
 
@@ -331,11 +360,21 @@ async function uploadAttachmentFromUrl(
         {
           folder: "task-attachments",
           resource_type: resourceType,
-          use_filename: true,
-          unique_filename: true,
           filename_override: fileName,
           timeout: REMOTE_UPLOAD_TIMEOUT_MS,
-          ...(mode.uploadPreset ? { upload_preset: mode.uploadPreset } : {}),
+          ...(mode.signed
+            ? {
+                // Same source URL -> same asset. If an earlier import already
+                // uploaded it (even one that failed before saving its DB rows),
+                // Cloudinary returns the existing asset instead of storing a copy.
+                public_id: importPublicId(url, fileName, resourceType),
+                overwrite: false,
+              }
+            : {
+                use_filename: true,
+                unique_filename: true,
+                upload_preset: mode.uploadPreset,
+              }),
         },
         (error, result) => {
           clearTimeout(timer);
@@ -363,6 +402,66 @@ async function uploadAttachmentFromUrl(
   }
 }
 
+const REMOTE_UPLOAD_ATTEMPTS = 3;
+
+// A large import runs many downloads/uploads in parallel, so a single slow
+// response or network blip is expected now and then — retry those instead of
+// failing the whole import. Signed uploads use a stable public_id, so a retry
+// after a partly-finished upload doesn't store a second copy.
+async function uploadAttachmentFromUrlWithRetry(
+  url: string,
+  mode: UploadMode,
+): Promise<UploadedFile> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await uploadAttachmentFromUrl(url, mode);
+    } catch (error) {
+      const retryable =
+        !(error instanceof CloudinaryUploadError) || error.retryable;
+      if (!retryable || attempt >= REMOTE_UPLOAD_ATTEMPTS) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 2_000 * attempt));
+    }
+  }
+}
+
+export type SettledUpload =
+  | { ok: true; file: UploadedFile }
+  | { ok: false; error: unknown };
+
+/**
+ * Like uploadTaskAttachmentsFromUrls, but one failing URL doesn't stop the
+ * rest: every URL gets its own result, in input order. Only a missing
+ * Cloudinary config throws.
+ */
+export async function uploadTaskAttachmentsFromUrlsSettled(
+  urls: string[],
+  options?: { concurrency?: number },
+): Promise<SettledUpload[]> {
+  if (urls.length === 0) return [];
+  const mode = ensureConfigured();
+  const concurrency = Math.max(1, options?.concurrency ?? 4);
+  const results: SettledUpload[] = new Array(urls.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < urls.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      try {
+        const file = await uploadAttachmentFromUrlWithRetry(urls[index]!, mode);
+        results[index] = { ok: true, file };
+      } catch (error) {
+        results[index] = { ok: false, error };
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, urls.length) }, () => worker()),
+  );
+  return results;
+}
+
 /** Download remote image URLs and re-upload them into this project's Cloudinary. */
 export async function uploadTaskAttachmentsFromUrls(
   urls: string[],
@@ -379,7 +478,7 @@ export async function uploadTaskAttachmentsFromUrls(
       const index = nextIndex;
       nextIndex += 1;
       const url = urls[index]!;
-      results[index] = await uploadAttachmentFromUrl(url, mode);
+      results[index] = await uploadAttachmentFromUrlWithRetry(url, mode);
     }
   }
 
