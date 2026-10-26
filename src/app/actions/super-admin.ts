@@ -2663,6 +2663,12 @@ export async function previewMissionHistoryImportAction(
   return { rows: classifyMissionHistoryImportRows({ rows, ...refData }) };
 }
 
+export type MissionHistoryImportFailure = {
+  rowNumber: number;
+  label: string;
+  error: string;
+};
+
 export async function importMissionHistoryAction(
   complexId: string,
   rows: MissionHistoryImportRow[],
@@ -2672,6 +2678,7 @@ export async function importMissionHistoryAction(
   created?: number;
   updated?: number;
   skipped?: number;
+  failures?: MissionHistoryImportFailure[];
 }> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
   if (user.role !== "super_admin") {
@@ -2799,17 +2806,55 @@ export async function importMissionHistoryAction(
     `);
   }
 
-  const queries: ReturnType<typeof sql>[] = [];
+  // Each row's queries stay together so a row is written all or nothing.
+  // Rows are sent in groups for speed; when a group fails, its rows are
+  // retried one by one so the failing row is reported and the rest import.
+  type PendingRow = {
+    rowNumber: number;
+    externalId: string;
+    title: string;
+    action: "create" | "update";
+    queries: ReturnType<typeof sql>[];
+  };
+  const pending: PendingRow[] = [];
+  const failures: MissionHistoryImportFailure[] = [];
   let created = 0;
   let updated = 0;
   let skipped = 0;
   const CHUNK = 40;
 
-  async function flushQueries() {
-    if (queries.length === 0) return;
-    const batch = queries.splice(0, queries.length);
-    for (let i = 0; i < batch.length; i += CHUNK) {
-      await sql.transaction(batch.slice(i, i + CHUNK));
+  function countWritten(row: PendingRow) {
+    if (row.action === "create") created += 1;
+    else updated += 1;
+  }
+
+  async function flushPending() {
+    if (pending.length === 0) return;
+    const batch = pending.splice(0, pending.length);
+    try {
+      await sql.transaction(batch.flatMap((row) => row.queries));
+      batch.forEach(countWritten);
+      return;
+    } catch (error) {
+      if (isDatabaseConnectionError(error)) throw error;
+    }
+    for (const row of batch) {
+      try {
+        await sql.transaction(row.queries);
+        countWritten(row);
+      } catch (rowError) {
+        if (isDatabaseConnectionError(rowError)) throw rowError;
+        console.error("importMissionHistoryAction row failed", {
+          rowNumber: row.rowNumber,
+          externalId: row.externalId,
+          error: rowError,
+        });
+        failures.push({
+          rowNumber: row.rowNumber,
+          label: `${row.externalId} · ${row.title}`,
+          error: describeDbError(rowError),
+        });
+      }
     }
   }
 
@@ -2820,6 +2865,7 @@ export async function importMissionHistoryAction(
         continue;
       }
 
+      const queries: ReturnType<typeof sql>[] = [];
       const missionId = row.existingMissionId ?? crypto.randomUUID();
       const description = row.note || row.title;
 
@@ -2838,7 +2884,6 @@ export async function importMissionHistoryAction(
           WHERE id = ${missionId}
             AND type = 'mission'
         `);
-        updated += 1;
       } else {
         queries.push(sql`
           INSERT INTO tasks (
@@ -2858,7 +2903,6 @@ export async function importMissionHistoryAction(
             now()
           )
         `);
-        created += 1;
       }
 
       queries.push(sql`
@@ -2919,14 +2963,20 @@ export async function importMissionHistoryAction(
 
       queueMissionHistoryAttachmentInserts(queries, missionId, row.imageUrls);
 
-      if (queries.length >= CHUNK) {
-        await flushQueries();
+      pending.push({
+        rowNumber: row.rowNumber,
+        externalId: row.externalId,
+        title: row.title,
+        action: row.classification,
+        queries,
+      });
+      if (pending.reduce((sum, item) => sum + item.queries.length, 0) >= CHUNK) {
+        await flushPending();
       }
     }
 
-    await flushQueries();
+    await flushPending();
   } catch (error) {
-    await flushQueries().catch(() => undefined);
     const databaseError = error as {
       code?: unknown;
       constraint?: unknown;
@@ -2946,10 +2996,11 @@ export async function importMissionHistoryAction(
       updated,
     });
     return {
-      error: dict.admin.uploadImportFailed,
+      error: describeImportFailure(error, dict, dict.admin.uploadImportFailed),
       created,
       updated,
       skipped,
+      failures,
     };
   }
 
@@ -2965,6 +3016,7 @@ export async function importMissionHistoryAction(
     created,
     updated,
     skipped,
+    failures,
   };
 }
 

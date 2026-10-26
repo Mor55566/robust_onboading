@@ -9,6 +9,7 @@ import {
 import { useComplexContext } from "@/components/complex-context";
 import {
   DataUploadModal,
+  type ImportFailure,
   type ImportPreviewRow,
 } from "@/components/data-upload-modal";
 import { ScheduledMissionsImportGuideModal } from "@/components/scheduled-missions-import-guide-modal";
@@ -152,19 +153,36 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     let updated = 0;
     let skipped = 0;
     let done = 0;
+    const failures: ImportFailure[] = [];
 
     for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
       const batch = rows.slice(offset, offset + BATCH_SIZE);
       const result = await importMissionHistoryAction(complexId, batch);
-      if (result.error) {
-        return { error: result.error };
-      }
       created += result.created ?? 0;
       updated += result.updated ?? 0;
       skipped += result.skipped ?? 0;
+      failures.push(...(result.failures ?? []));
+      if (result.error) {
+        // The whole batch stopped (e.g. the database dropped): name its rows
+        // so it's clear where the import got to.
+        const range = t(dict.admin.uploadFailureRow, {
+          row: `${batch[0]!.rowNumber}–${batch[batch.length - 1]!.rowNumber}`,
+        });
+        if (failures.length === 0 && created + updated === 0) {
+          return { error: `${range}: ${result.error}` };
+        }
+        failures.push({ rowNumber: batch[0]!.rowNumber, label: range, error: result.error });
+        break;
+      }
 
       done = Math.min(offset + batch.length, total);
       reportProgress((done / total) * 100, { done, total });
+    }
+
+    void refreshUploadStatus();
+    if (failures.length > 0) {
+      failures.sort((a, b) => a.rowNumber - b.rowNumber);
+      return { failures, succeeded: created + updated };
     }
 
     setHistoryMessage({
@@ -175,7 +193,6 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
         skipped,
       }),
     });
-    void refreshUploadStatus();
   }
 
   return (
