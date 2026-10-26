@@ -1314,7 +1314,45 @@ export async function importTasksAction(
   const scopedComplexId = await resolveImportComplexId(complexId);
   if (!scopedComplexId) return { error: dict.admin.complexNotFound };
 
-  const [buildings, floors, areas, complexUsers, categories] = await Promise.all([
+  const failures: TaskImportFailure[] = [];
+
+  // call_number is a bigint column: a non-numeric value would make the
+  // lookups below throw, so fail just that row.
+  const validRows = rows.filter((row) => {
+    const callNumber = row.callNumber.trim();
+    if (!callNumber || /^\d+$/.test(callNumber)) return true;
+    failures.push({
+      rowNumber: row.rowNumber,
+      callNumber,
+      error: t(dict.superAdmin.invalidCallNumber, { callNumber }),
+    });
+    return false;
+  });
+
+  const callNumbers = [
+    ...new Set(
+      validRows
+        .map((row) => row.callNumber.trim())
+        .filter((callNumber) => Boolean(callNumber)),
+    ),
+  ];
+  const batchSourceUrls = [
+    ...new Set(
+      validRows.flatMap((row) => [...row.imageUrls, ...row.resolutionImageUrls]),
+    ),
+  ];
+
+  // All lookups in one round: each query is a network round trip, and this
+  // runs once per batch.
+  const [
+    buildings,
+    floors,
+    areas,
+    complexUsers,
+    categories,
+    existingTasks,
+    existingSourceRows,
+  ] = await Promise.all([
     sql`SELECT id, name, complex_id FROM buildings WHERE complex_id = ${scopedComplexId} ORDER BY name ASC`,
     sql`
       SELECT id, name, number, building_id FROM floors
@@ -1332,6 +1370,29 @@ export async function importTasksAction(
       WHERE ucp.complex_id = ${scopedComplexId}
     `,
     sql`SELECT id, name FROM task_categories WHERE complex_id = ${scopedComplexId}`,
+    callNumbers.length > 0
+      ? sql`
+          SELECT id, call_number
+          FROM tasks
+          WHERE type = 'task'
+            AND call_number = ANY(${callNumbers}::bigint[])
+            AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
+        `
+      : Promise.resolve([] as Record<string, unknown>[]),
+    // Only this batch's images — not every image ever imported.
+    batchSourceUrls.length > 0
+      ? sql`
+          SELECT
+            tas.source_storage_url,
+            ta.file_name,
+            ta.mime_type,
+            ta.storage_url
+          FROM task_attachment_sources tas
+          INNER JOIN task_attachments ta ON ta.id = tas.task_attachment_id
+          WHERE tas.source_system = ${ATTACHMENT_SOURCE_SYSTEM}
+            AND tas.source_storage_url = ANY(${batchSourceUrls}::text[])
+        `
+      : Promise.resolve([] as Record<string, unknown>[]),
   ]);
 
   const usersByComplex = new Map<string, { id: string; full_name: string }[]>();
@@ -1377,7 +1438,7 @@ export async function importTasksAction(
   }
 
   const resolved = resolveTaskImportRows({
-    rows,
+    rows: validRows,
     buildings: buildings.map((row) => ({
       id: row.id as string,
       name: row.name as string,
@@ -1441,56 +1502,8 @@ export async function importTasksAction(
     }
   }
 
-  // call_number is a bigint column: a non-numeric value would make the
-  // lookups below throw, so reject it with the row it came from.
-  const invalidCallNumberRow = resolved.rows.find(
-    (row) => row.callNumber && !/^\d+$/.test(row.callNumber.trim()),
-  );
-  if (invalidCallNumberRow) {
-    return {
-      error: t(dict.superAdmin.uploadRowError, {
-        row: invalidCallNumberRow.rowNumber,
-        message: t(dict.superAdmin.invalidCallNumber, {
-          callNumber: invalidCallNumberRow.callNumber!.trim(),
-        }),
-      }),
-      created: 0,
-      updated: 0,
-    };
-  }
-
-  const callNumbers = [
-    ...new Set(
-      resolved.rows
-        .map((row) => row.callNumber?.trim())
-        .filter((callNumber): callNumber is string => Boolean(callNumber)),
-    ),
-  ];
-
   const existingByCallNumber = new Map<string, string>();
   const sourceAttachmentByUrl = new Map<string, SourceAttachmentMeta>();
-
-  const [existingTasks, existingSourceRows] = await Promise.all([
-    callNumbers.length > 0
-      ? sql`
-          SELECT id, call_number
-          FROM tasks
-          WHERE type = 'task'
-            AND call_number = ANY(${callNumbers}::bigint[])
-            AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
-        `
-      : Promise.resolve([] as Record<string, unknown>[]),
-    sql`
-      SELECT
-        tas.source_storage_url,
-        ta.file_name,
-        ta.mime_type,
-        ta.storage_url
-      FROM task_attachment_sources tas
-      INNER JOIN task_attachments ta ON ta.id = tas.task_attachment_id
-      WHERE tas.source_system = ${ATTACHMENT_SOURCE_SYSTEM}
-    `,
-  ]);
 
   for (const row of existingTasks) {
     const callNumber = row.call_number == null ? "" : String(row.call_number);
@@ -1503,7 +1516,6 @@ export async function importTasksAction(
       storage_url: row.storage_url as string,
     });
   }
-  const failures: TaskImportFailure[] = [];
   function fail(row: ResolvedTaskImportRow, error: string) {
     failures.push({
       rowNumber: row.rowNumber,
@@ -1514,7 +1526,7 @@ export async function importTasksAction(
 
   // Upload every missing image for this batch with a bounded worker pool.
   // Once this finishes, each row below only maps already-uploaded assets.
-  // A URL that can't be copied fails only the rows that use it.
+  // A URL that can't be copied is skipped by the rows that use it.
   const allSourceUrls = [
     ...new Set(
       resolved.rows.flatMap((row) => [
@@ -1572,7 +1584,9 @@ export async function importTasksAction(
   }[] = [];
   let created = 0;
   let updated = 0;
-  const CHUNK = 40;
+  // Queries per transaction. Each transaction is one round trip; a failing
+  // batch is replayed row by row, so a bigger batch only costs on failure.
+  const CHUNK = 150;
 
   function recordSuccess(boundary: (typeof rowBoundaries)[number]) {
     if (boundary.isNew) created += 1;
@@ -1624,19 +1638,17 @@ export async function importTasksAction(
   }
 
   for (const row of resolved.rows) {
-    const rowUrls = [...row.imageUrls, ...row.resolutionImageUrls];
-    const failedUrl = rowUrls.find((url) => failedSourceUrls.has(url));
-    if (failedUrl) {
-      fail(
-        row,
-        t(dict.superAdmin.imageImportFailed, {
-          url: failedSourceUrls.get(failedUrl) ?? failedUrl,
-        }),
-      );
-      continue;
-    }
-
-    const uploaded = await importRowAttachments(row, sourceAttachmentByUrl);
+    // A file that couldn't be copied (too large, unavailable…) is left out;
+    // the ticket itself still imports. Re-uploading the file later adds it.
+    const uploaded = await importRowAttachments(
+      {
+        imageUrls: row.imageUrls.filter((url) => !failedSourceUrls.has(url)),
+        resolutionImageUrls: row.resolutionImageUrls.filter(
+          (url) => !failedSourceUrls.has(url),
+        ),
+      },
+      sourceAttachmentByUrl,
+    );
     if (!uploaded.ok) {
       fail(
         row,
@@ -3076,8 +3088,11 @@ async function resolveFilesImport(
   try {
     [complexes, existing, tags, residents] = await Promise.all([
       sql`SELECT id, name FROM complexes ORDER BY name ASC`,
-      sql`SELECT id, complex_id, external_id, title FROM file_series`,
-      sql`SELECT id, complex_id, name FROM file_tags`,
+      sql`
+        SELECT id, complex_id, external_id, title FROM file_series
+        WHERE complex_id = ${scopedComplexId}
+      `,
+      sql`SELECT id, complex_id, name FROM file_tags WHERE complex_id = ${scopedComplexId}`,
       listResidentsForImport(),
     ]);
   } catch (error) {
@@ -3087,6 +3102,7 @@ async function resolveFilesImport(
 
   const resolved = resolveFileImportRows({
     rows,
+    complexId: scopedComplexId,
     complexes: complexes.map((row) => ({
       id: row.id as string,
       name: row.name as string,
@@ -3102,7 +3118,7 @@ async function resolveFilesImport(
       complex_id: row.complex_id as string,
       name: row.name as string,
     })),
-    residents,
+    residents: residents.filter((resident) => resident.complex_id === scopedComplexId),
   });
 
   if (!resolved.ok) {
@@ -3119,20 +3135,7 @@ async function resolveFilesImport(
       };
     }
     return {
-      error: withRow(t(dict.superAdmin.complexNotFound, { name: resolved.value })),
-    };
-  }
-
-  // The "נכס" column must point at the complex selected in the header —
-  // never write documents into a different complex than the one shown.
-  const foreignRow = resolved.items.find((item) => item.complexId !== scopedComplexId);
-  if (foreignRow) {
-    const row = rows.find((candidate) => candidate.rowNumber === foreignRow.rowNumber);
-    return {
-      error: t(dict.superAdmin.uploadRowError, {
-        row: foreignRow.rowNumber,
-        message: t(dict.superAdmin.fileComplexMismatch, { name: row?.complex ?? "" }),
-      }),
+      error: withRow(t(dict.superAdmin.fileComplexMismatch, { name: resolved.value })),
     };
   }
 

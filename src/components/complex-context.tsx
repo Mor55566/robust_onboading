@@ -17,8 +17,7 @@ type ComplexContextValue = {
   addComplex: (complex: ComplexOption) => void;
   selectedComplex: ComplexOption | null;
   /**
-   * Given building names (or, for missions, template-mission titles)
-   * referenced in an upload's rows, returns a list of human-readable
+   * Given building names referenced in an upload's rows, returns a list of human-readable
    * problems for any name that looks like it belongs to a DIFFERENT complex
    * than the one currently selected — call this before running an import
    * and block on a non-empty result. Callers must check
@@ -27,7 +26,6 @@ type ComplexContextValue = {
    * this check is meant to fail closed, not open.
    */
   checkBuildingNames: (names: (string | null | undefined)[]) => string[];
-  checkMissionTemplateTitles: (titles: (string | null | undefined)[]) => string[];
   guardDirectoryReady: boolean;
   /**
    * Per-upload-type "does this complex already have at least one record of
@@ -59,7 +57,6 @@ export function ComplexProvider({
   const [uploadStatus, setUploadStatus] = useState<UploadStatus | null>(null);
   const [guardDirectory, setGuardDirectory] = useState<{
     buildings: { name: string; complexId: string | null }[];
-    missionTemplateTitles: { name: string; complexId: string | null }[];
   } | null>(null);
 
   useEffect(() => {
@@ -143,11 +140,6 @@ export function ComplexProvider({
     return findCrossComplexIssues(names, guardDirectory.buildings, complexId);
   }
 
-  function checkMissionTemplateTitles(titles: (string | null | undefined)[]) {
-    if (!guardDirectory || !complexId) return [];
-    return findCrossComplexIssues(titles, guardDirectory.missionTemplateTitles, complexId);
-  }
-
   return (
     <ComplexContext.Provider
       value={{
@@ -155,7 +147,6 @@ export function ComplexProvider({
         setComplexId,
         complexes,
         checkBuildingNames,
-        checkMissionTemplateTitles,
         guardDirectoryReady: guardDirectory !== null,
         chains: initialChains,
         addComplex,

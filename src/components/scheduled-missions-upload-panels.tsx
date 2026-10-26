@@ -36,7 +36,6 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
   const {
     complexId,
     checkBuildingNames,
-    checkMissionTemplateTitles,
     guardDirectoryReady,
     uploadStatus,
     refreshUploadStatus,
@@ -90,11 +89,11 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     void refreshUploadStatus();
   }
 
+  // Titles aren't guarded: the same task title (e.g. a routine pump check)
+  // legitimately exists in many complexes, and the server only matches titles
+  // against the selected complex's scheduled missions anyway.
   function checkMissionHistoryRows(rows: MissionHistoryImportRow[]): string[] {
-    return [
-      ...checkMissionTemplateTitles(rows.map((row) => row.title)),
-      ...checkBuildingNames(rows.flatMap((row) => row.buildingsRaw)),
-    ];
+    return checkBuildingNames(rows.flatMap((row) => row.buildingsRaw));
   }
 
   async function previewHistoryRows(

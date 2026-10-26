@@ -284,7 +284,9 @@ export function parseFilesImportContent(
     "שייך מסמך ל",
   ]);
 
-  if (externalIdIndex < 0 || titleIndex < 0 || complexIndex < 0) {
+  // The "נכס" column is optional: rows always go to the complex selected in
+  // the header, and the column only serves as a cross-check against it.
+  if (externalIdIndex < 0 || titleIndex < 0) {
     return { error: "invalid" };
   }
 
@@ -298,11 +300,11 @@ export function parseFilesImportContent(
     const rowNumber = i + 1;
     const externalId = (cells[externalIdIndex] ?? "").trim();
     const title = (cells[titleIndex] ?? "").trim();
-    const complex = (cells[complexIndex] ?? "").trim();
+    const complex = complexIndex >= 0 ? (cells[complexIndex] ?? "").trim() : "";
     const tag = tagIndex >= 0 ? (cells[tagIndex] ?? "").trim() : "";
     const resident =
       residentIndex >= 0 ? (cells[residentIndex] ?? "").trim() : "";
-    if (!externalId || !title || !complex) {
+    if (!externalId || !title) {
       return { error: "invalidRow", message: `__row__:${rowNumber}` };
     }
     if (seenExternalIds.has(externalId)) {
@@ -418,6 +420,8 @@ function fileSeriesTitleKey(complexId: string, title: string) {
 
 export function resolveFileImportRows(options: {
   rows: FileImportRow[];
+  /** The complex selected in the header — every row is written to it. */
+  complexId: string;
   complexes: ImportComplex[];
   existing: ExistingFileSeries[];
   tags?: ExistingFileTag[];
@@ -427,7 +431,7 @@ export function resolveFileImportRows(options: {
   | {
       ok: false;
       rowNumber: number;
-      code: "complex" | "tag" | "resident";
+      code: "complexMismatch" | "tag" | "resident";
       value: string;
     } {
   const complexByName = new Map(
@@ -436,6 +440,7 @@ export function resolveFileImportRows(options: {
       complex,
     ]),
   );
+  const complex = { id: options.complexId };
   const byExternalId = new Map<string, ExistingFileSeries>();
   const unmatchedByTitle = new Map<string, ExistingFileSeries[]>();
   for (const series of options.existing) {
@@ -465,13 +470,21 @@ export function resolveFileImportRows(options: {
   const items: ResolvedFileImportRow[] = [];
 
   for (const row of options.rows) {
-    const complex = resolveComplexByName(
+    // A "נכס" value naming a different known complex means the file belongs
+    // elsewhere; block it rather than write it into the selected complex. An
+    // unrecognized name is ignored — the row still goes to the selected one.
+    const named = resolveComplexByName(
       row.complex,
       options.complexes,
       complexByName,
     );
-    if (!complex) {
-      return { ok: false, rowNumber: row.rowNumber, code: "complex", value: row.complex };
+    if (named && named.id !== complex.id) {
+      return {
+        ok: false,
+        rowNumber: row.rowNumber,
+        code: "complexMismatch",
+        value: row.complex,
+      };
     }
 
     const tagIds: string[] = [];

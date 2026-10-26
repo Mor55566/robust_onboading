@@ -58,10 +58,14 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
           JOIN buildings b ON b.id = t.building_id
           WHERE b.complex_id = ${complexId} AND t.type = 'template-mission'
         ) AS scheduled_missions,
+        -- Missions generated from this complex's scheduled missions have no
+        -- external id; only rows from a history upload (which requires one)
+        -- count as uploaded history.
         EXISTS (
           SELECT 1 FROM tasks t
           JOIN buildings b ON b.id = t.building_id
           WHERE b.complex_id = ${complexId} AND t.type = 'mission'
+            AND t.external_id IS NOT NULL
         ) AS mission_history,
         EXISTS (
           SELECT 1 FROM tasks t

@@ -135,6 +135,11 @@ function toUploadError(error: unknown): Error {
     );
   }
 
+  // The account's per-file size limit: the same file will never fit.
+  if (/file size too large/i.test(message)) {
+    return new CloudinaryUploadError(message, { retryable: false });
+  }
+
   return new CloudinaryUploadError(message);
 }
 

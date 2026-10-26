@@ -15,6 +15,7 @@ import {
   DataUploadModal,
   type ImportFailure,
   type ImportPreviewRow,
+  type ImportProgressCounts,
 } from "@/components/data-upload-modal";
 import { DevtoolsScriptGuideModal } from "@/components/devtools-script-guide-modal";
 import { UploadCard, UploadMessage } from "@/components/upload-card";
@@ -69,7 +70,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
 
   async function handleImport(
     rows: TaskImportRow[],
-    reportProgress: (percent: number) => void,
+    reportProgress: (percent: number, counts?: ImportProgressCounts) => void,
   ) {
     setMessage(null);
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
@@ -77,22 +78,42 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
     reportProgress(0);
 
-    const BATCH_SIZE = 20;
+    const BATCH_SIZE = 40;
+    // Batches in flight at once. Each request spends most of its time
+    // waiting on the DB / Cloudinary, so a few in parallel finish much sooner.
+    const CONCURRENCY = 3;
     let created = 0;
     let updated = 0;
+    let doneRows = 0;
     const failures: ImportFailure[] = [];
-    const callNumberByRow = new Map(
-      rows.map((row) => [row.rowNumber, row.callNumber.trim()]),
-    );
     const failureLabel = (callNumber: string | null | undefined) =>
       callNumber
         ? t(dict.admin.uploadFailureCallNumber, { callNumber })
         : undefined;
 
+    // Rows sharing a call number stay in one batch, so two parallel batches
+    // never both try to create the same ticket.
+    const groups = new Map<string, TaskImportRow[]>();
+    for (const row of rows) {
+      const key = row.callNumber.trim() || `row:${row.rowNumber}`;
+      const group = groups.get(key);
+      if (group) group.push(row);
+      else groups.set(key, [row]);
+    }
+    const batches: TaskImportRow[][] = [];
+    let current: TaskImportRow[] = [];
+    for (const group of groups.values()) {
+      if (current.length > 0 && current.length + group.length > BATCH_SIZE) {
+        batches.push(current);
+        current = [];
+      }
+      current.push(...group);
+    }
+    if (current.length > 0) batches.push(current);
+
     // One bad row (or batch) must not stop the other rows: collect failures
     // and report them all at the end.
-    for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
-      const batch = rows.slice(offset, offset + BATCH_SIZE);
+    async function runBatch(batch: TaskImportRow[]) {
       let batchError: string | null = null;
       try {
         const result = await importTasksAction(complexId, batch);
@@ -117,16 +138,29 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         for (const row of batch) {
           failures.push({
             rowNumber: row.rowNumber,
-            label: failureLabel(callNumberByRow.get(row.rowNumber)),
+            label: failureLabel(row.callNumber.trim()),
             error: batchError,
           });
         }
       }
 
-      reportProgress(
-        (Math.min(offset + batch.length, rows.length) / rows.length) * 100,
-      );
+      doneRows += batch.length;
+      reportProgress((doneRows / rows.length) * 100, {
+        done: doneRows,
+        total: rows.length,
+      });
     }
+
+    let nextBatch = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, batches.length) }, async () => {
+        while (nextBatch < batches.length) {
+          const batch = batches[nextBatch]!;
+          nextBatch += 1;
+          await runBatch(batch);
+        }
+      }),
+    );
 
     void refreshUploadStatus();
 

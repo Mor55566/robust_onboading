@@ -88,6 +88,7 @@ describe("file series import (documents CSV, series-only)", () => {
   it("creates a new series and keeps the template id as external id", () => {
     const result = resolveFileImportRows({
       rows: [fileRow({ externalId: "visitt-42", title: "Insurance" })],
+      complexId: "complex-1",
       complexes,
       existing: [],
     });
@@ -103,6 +104,7 @@ describe("file series import (documents CSV, series-only)", () => {
   it("matches an existing series by external id even if the title changed", () => {
     const result = resolveFileImportRows({
       rows: [fileRow({ externalId: "visitt-42", title: "Insurance 2026" })],
+      complexId: "complex-1",
       complexes,
       existing: [
         existingSeries({
@@ -125,6 +127,7 @@ describe("file series import (documents CSV, series-only)", () => {
   it("claims a unique title match when the existing series has no external id", () => {
     const result = resolveFileImportRows({
       rows: [fileRow({ externalId: "visitt-42", title: "Insurance" })],
+      complexId: "complex-1",
       complexes,
       existing: [
         existingSeries({
@@ -146,6 +149,7 @@ describe("file series import (documents CSV, series-only)", () => {
   it("creates a new series when two untitled-id series share the same title", () => {
     const result = resolveFileImportRows({
       rows: [fileRow({ externalId: "visitt-42", title: "Insurance" })],
+      complexId: "complex-1",
       complexes,
       existing: [
         existingSeries({ id: "series-1", title: "Insurance" }),
@@ -162,22 +166,59 @@ describe("file series import (documents CSV, series-only)", () => {
     assert.notEqual(item.id, "series-2");
   });
 
-  it("rejects a row whose complex cannot be resolved", () => {
+  it("writes rows to the selected complex when the property name is unknown or missing", () => {
     const result = resolveFileImportRows({
-      rows: [fileRow({ externalId: "visitt-1", title: "Insurance", complex: "Unknown" })],
+      rows: [
+        fileRow({ externalId: "visitt-1", title: "Insurance", complex: "Unknown" }),
+        fileRow({ rowNumber: 3, externalId: "visitt-2", title: "Permit", complex: "" }),
+      ],
+      complexId: "complex-1",
       complexes,
+      existing: [],
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.deepEqual(
+      result.items.map((item) => item.complexId),
+      ["complex-1", "complex-1"],
+    );
+  });
+
+  it("rejects a row whose property names a different complex", () => {
+    const result = resolveFileImportRows({
+      rows: [fileRow({ externalId: "visitt-1", title: "Insurance", complex: "Complex B" })],
+      complexId: "complex-1",
+      complexes: [...complexes, { id: "complex-2", name: "Complex B" }],
       existing: [],
     });
 
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.equal(result.code, "complex");
-    assert.equal(result.value, "Unknown");
+    assert.equal(result.code, "complexMismatch");
+    assert.equal(result.value, "Complex B");
+  });
+
+  it("never matches an existing series from another complex", () => {
+    const result = resolveFileImportRows({
+      rows: [fileRow({ externalId: "visitt-42", title: "Insurance" })],
+      complexId: "complex-1",
+      complexes,
+      existing: [
+        existingSeries({ id: "series-other", complex_id: "complex-2", external_id: "visitt-42" }),
+      ],
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.items[0]?.action, "create");
+    assert.notEqual(result.items[0]?.id, "series-other");
   });
 
   it("saves a matching tag on the series, not a file", () => {
     const result = resolveFileImportRows({
       rows: [fileRow({ externalId: "visitt-42", title: "Insurance", tag: "חוזים" })],
+      complexId: "complex-1",
       complexes,
       existing: [],
       tags: [
@@ -197,6 +238,7 @@ describe("file series import (documents CSV, series-only)", () => {
   it("rejects a tag that does not exist in the resolved complex", () => {
     const result = resolveFileImportRows({
       rows: [fileRow({ externalId: "visitt-42", title: "Insurance", tag: "Missing" })],
+      complexId: "complex-1",
       complexes,
       existing: [],
       tags: [
@@ -223,6 +265,7 @@ describe("file series import (documents CSV, series-only)", () => {
           resident: "דייר - מנדיי",
         }),
       ],
+      complexId: "complex-1",
       complexes,
       existing: [],
       residents: [
@@ -248,6 +291,7 @@ describe("file series import (documents CSV, series-only)", () => {
           resident: "דייר - אינבידיה (בארכיון)",
         }),
       ],
+      complexId: "complex-1",
       complexes,
       existing: [],
       residents: [
@@ -273,6 +317,7 @@ describe("file series import (documents CSV, series-only)", () => {
           resident: "דייר - מנדיי",
         }),
       ],
+      complexId: "complex-1",
       complexes,
       existing: [],
       residents: [],

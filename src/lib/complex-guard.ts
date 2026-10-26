@@ -1,5 +1,5 @@
 // New for robust_onboading. Client-side, defense-in-depth check that runs
-// before the building / mission-template import actions. Those actions now
+// before the import actions. Those actions now
 // receive the selected complex and scope every lookup (buildings, floors,
 // areas, equipment, categories, users, existing rows by external_id / call
 // number) to it on the server, so a row can no longer resolve to another
@@ -18,13 +18,24 @@ export function normalizeForComplexGuard(value: string): string {
 
 export type NamedEntity = { name: string; complexId: string | null };
 
+function namesMatch(name: string, candidate: string): boolean {
+  return (
+    name === candidate ||
+    candidate.startsWith(`${name} /`) ||
+    name.startsWith(`${candidate} /`) ||
+    candidate.startsWith(`${name} `) ||
+    candidate.endsWith(` ${name}`)
+  );
+}
+
 /**
  * Given a name referenced in an uploaded row and the full system-wide
- * directory of named entities (buildings, or mission-template titles) with
- * their owning complex, returns the directory entries whose name matches
- * (exactly, or as a "<name> / ..." prefix in either direction — the same
- * shape with_robust_app's own building-name matching uses) but which belong
- * to a complex OTHER than the expected one.
+ * directory of buildings with their owning complex, returns the directory
+ * entries whose name matches (exactly, or as a "<name> / ..." prefix in
+ * either direction — the same shape with_robust_app's own building-name
+ * matching uses) but which belong to a complex OTHER than the expected one.
+ * A name that also matches something in the expected complex is fine — the
+ * server resolves it there — so it returns nothing for it.
  */
 export function findOtherComplexMatches(
   referencedName: string,
@@ -36,18 +47,10 @@ export function findOtherComplexMatches(
 
   const matches: NamedEntity[] = [];
   for (const entity of directory) {
-    if (entity.complexId === expectedComplexId) continue;
     const name = normalizeForComplexGuard(entity.name);
-    if (!name) continue;
-    if (
-      name === candidate ||
-      candidate.startsWith(`${name} /`) ||
-      name.startsWith(`${candidate} /`) ||
-      candidate.startsWith(`${name} `) ||
-      candidate.endsWith(` ${name}`)
-    ) {
-      matches.push(entity);
-    }
+    if (!name || !namesMatch(name, candidate)) continue;
+    if (entity.complexId === expectedComplexId) return [];
+    matches.push(entity);
   }
   return matches;
 }
@@ -55,7 +58,7 @@ export function findOtherComplexMatches(
 /**
  * Checks every name in `referencedNames` (deduplicated) against the
  * directory, returning a short, human-readable list of problem descriptions
- * for any name that matches a building/template belonging to a different
+ * for any name that matches a building belonging only to a different
  * complex. An empty array means the check found nothing to block.
  */
 export const GUARD_NOT_READY_MESSAGE =
