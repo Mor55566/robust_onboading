@@ -589,6 +589,8 @@ export type FileAttachmentImportImage = {
 
 export type FileAttachmentImportDocument = {
   rowNumber: number;
+  /** Every file row (header = 1) this document was built from — one per attachment. */
+  sourceRowNumbers?: number[];
   externalId: string;
   tag: string;
   resident: string;
@@ -964,10 +966,12 @@ export function parseFileAttachmentsImportContent(
             ? (cells[createdByNameIndex] ?? "").trim()
             : "",
         attachments: [],
+        sourceRowNumbers: [],
       };
       grouped.set(key, document);
       order.push(key);
     }
+    document.sourceRowNumbers?.push(rowNumber);
 
     const storageUrl = (cells[storageUrlIndex] ?? "").trim();
     const attachmentFileName =

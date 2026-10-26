@@ -3199,13 +3199,45 @@ export async function importFileTagsAction(
   }
 }
 
+type RowResolveFailure = { rowNumber: number; code: string; value: string };
+
+/**
+ * Runs a whole-file resolver, but drops each row it rejects and tries again,
+ * so one unknown tag/resident only skips that row instead of the whole file.
+ */
+function resolveSkippingFailedRows<Row extends { rowNumber: number }, Item>(
+  rows: Row[],
+  resolve: (
+    rows: Row[],
+  ) => { ok: true; items: Item[] } | ({ ok: false } & RowResolveFailure),
+): { items: Item[]; failed: { row: Row; failure: RowResolveFailure }[] } {
+  let remaining = rows;
+  const failed: { row: Row; failure: RowResolveFailure }[] = [];
+  while (remaining.length > 0) {
+    const resolved = resolve(remaining);
+    if (resolved.ok) return { items: resolved.items, failed };
+    const bad = remaining.find((row) => row.rowNumber === resolved.rowNumber);
+    if (!bad) {
+      // Can't tell which row failed: fail them all rather than loop forever.
+      for (const row of remaining) failed.push({ row, failure: resolved });
+      return { items: [], failed };
+    }
+    failed.push({ row: bad, failure: resolved });
+    remaining = remaining.filter((row) => row !== bad);
+  }
+  return { items: [], failed };
+}
+
 async function resolveFilesImport(
   rows: FileImportRow[],
   dict: Awaited<ReturnType<typeof getDictionary>>,
   scopedComplexId: string,
 ): Promise<
   | { error: string }
-  | { items: Extract<ReturnType<typeof resolveFileImportRows>, { ok: true }>["items"] }
+  | {
+      items: Extract<ReturnType<typeof resolveFileImportRows>, { ok: true }>["items"];
+      failures: { rowNumber: number; label: string; error: string }[];
+    }
 > {
   let complexes, existing, tags, residents;
   try {
@@ -3223,8 +3255,8 @@ async function resolveFilesImport(
     return { error: describeImportFailure(error, dict, dict.superAdmin.filesUploadFailed) };
   }
 
-  const resolved = resolveFileImportRows({
-    rows,
+  const resolved = resolveSkippingFailedRows(rows, (remaining) => resolveFileImportRows({
+    rows: remaining,
     complexId: scopedComplexId,
     complexes: complexes.map((row) => ({
       id: row.id as string,
@@ -3242,38 +3274,35 @@ async function resolveFilesImport(
       name: row.name as string,
     })),
     residents: residents.filter((resident) => resident.complex_id === scopedComplexId),
-  });
+  }));
 
-  if (!resolved.ok) {
-    const withRow = (message: string) =>
-      t(dict.superAdmin.uploadRowError, { row: resolved.rowNumber, message });
-    if (resolved.code === "tag") {
-      return {
-        error: withRow(t(dict.superAdmin.fileTagNotFound, { name: resolved.value })),
-      };
-    }
-    if (resolved.code === "resident") {
-      return {
-        error: withRow(t(dict.superAdmin.fileResidentNotFound, { name: resolved.value })),
-      };
-    }
-    return {
-      error: withRow(t(dict.superAdmin.fileComplexMismatch, { name: resolved.value })),
-    };
-  }
+  const failures = resolved.failed.map(({ row, failure }) => ({
+    rowNumber: row.rowNumber,
+    label: row.title,
+    error:
+      failure.code === "tag"
+        ? t(dict.superAdmin.fileTagNotFound, { name: failure.value })
+        : failure.code === "resident"
+          ? t(dict.superAdmin.fileResidentNotFound, { name: failure.value })
+          : t(dict.superAdmin.fileComplexMismatch, { name: failure.value }),
+  }));
 
-  return { items: resolved.items };
+  return { items: resolved.items, failures };
 }
 
 /**
  * Checks the whole file once before the import starts (complexes, tags and
- * residents all resolve), so a bad file fails right away in the preview
- * instead of after several slow batches.
+ * residents all resolve), so rows that won't import show up red in the
+ * preview instead of after several slow batches.
  */
 export async function validateFilesImportAction(
   complexId: string,
   rows: FileImportRow[],
-): Promise<{ error?: string; ok?: true }> {
+): Promise<{
+  error?: string;
+  ok?: true;
+  failures?: { rowNumber: number; label: string; error: string }[];
+}> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
   if (user.role !== "super_admin") {
     return { error: dict.errors.unauthorized };
@@ -3286,7 +3315,7 @@ export async function validateFilesImportAction(
 
   const resolved = await resolveFilesImport(rows, dict, scopedComplexId);
   if ("error" in resolved) return { error: resolved.error };
-  return { ok: true };
+  return { ok: true, failures: resolved.failures };
 }
 
 export async function importFilesAction(
@@ -3297,6 +3326,7 @@ export async function importFilesAction(
   success?: string;
   created?: number;
   updated?: number;
+  failures?: { rowNumber: number; label: string; error: string }[];
 }> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
   if (user.role !== "super_admin") {
@@ -3313,6 +3343,10 @@ export async function importFilesAction(
     return { error: resolvedImport.error };
   }
   const resolved = { items: resolvedImport.items };
+  const failures = resolvedImport.failures;
+  if (resolved.items.length === 0) {
+    return { created: 0, updated: 0, failures };
+  }
 
   // One transaction per batch: a single round trip to the database instead
   // of one per row, which matters a lot on a slow connection.
@@ -3364,6 +3398,7 @@ export async function importFilesAction(
     success,
     created,
     updated,
+    failures,
   };
 }
 
@@ -3489,20 +3524,58 @@ async function loadFileAttachmentImportContext(
   };
 }
 
+type FileAttachmentImportFailure = {
+  rowNumber: number;
+  rowNumbers?: number[];
+  label: string;
+  error: string;
+};
+
+function fileAttachmentFailure(
+  row: FileAttachmentImportDocument,
+  error: string,
+): FileAttachmentImportFailure {
+  return {
+    rowNumber: row.rowNumber,
+    rowNumbers: row.sourceRowNumbers,
+    label: `${row.externalId} · v${row.version}`,
+    error,
+  };
+}
+
+/** Resolves the rows, skipping (and describing) each one that can't be matched. */
 function resolveFileAttachmentsForImport(
   rows: FileAttachmentImportDocument[],
   context: FileAttachmentImportContext,
+  dict: Dictionary,
 ) {
-  return resolveFileAttachmentImportRows({
-    rows,
-    complexId: context.complexId,
-    existingSeries: context.existingSeries,
-    existingVersions: context.existingVersions,
-    existingAttachments: context.existingAttachments,
-    tags: context.tags,
-    residents: context.residents,
-    users: context.users,
-  });
+  const resolved = resolveSkippingFailedRows(rows, (remaining) =>
+    resolveFileAttachmentImportRows({
+      rows: remaining,
+      complexId: context.complexId,
+      existingSeries: context.existingSeries,
+      existingVersions: context.existingVersions,
+      existingAttachments: context.existingAttachments,
+      tags: context.tags,
+      residents: context.residents,
+      users: context.users,
+    }),
+  );
+  return {
+    items: resolved.items,
+    failures: resolved.failed.map(({ row, failure }) =>
+      fileAttachmentFailure(
+        row,
+        failure.code === "user"
+          ? t(dict.superAdmin.userNotFound, { name: failure.value })
+          : failure.code === "series"
+            ? t(dict.superAdmin.fileSeriesNotFound, { name: failure.value })
+            : failure.code === "tag"
+              ? t(dict.superAdmin.fileTagNotFound, { name: failure.value })
+              : t(dict.superAdmin.fileResidentNotFound, { name: failure.value }),
+      ),
+    ),
+  };
 }
 
 export async function previewFileAttachmentsImportAction(
@@ -3520,6 +3593,7 @@ export async function previewFileAttachmentsImportAction(
     skipCount: number;
     reuseCount: number;
   }>;
+  failures?: FileAttachmentImportFailure[];
 }> {
   const [dict] = await Promise.all([getDictionary()]);
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -3531,26 +3605,10 @@ export async function previewFileAttachmentsImportAction(
     return { error: loaded.error };
   }
 
-  const resolved = resolveFileAttachmentsForImport(rows, loaded.context);
-  if (!resolved.ok) {
-    if (resolved.code === "user") {
-      return {
-        error: t(dict.superAdmin.userNotFound, { name: resolved.value }),
-      };
-    }
-    if (resolved.code === "series") {
-      return {
-        error: t(dict.superAdmin.fileSeriesNotFound, {
-          name: resolved.value,
-        }),
-      };
-    }
-    return {
-      error: t(dict.superAdmin.fileResidentNotFound, { name: resolved.value }),
-    };
-  }
+  const resolved = resolveFileAttachmentsForImport(rows, loaded.context, dict);
 
   return {
+    failures: resolved.failures,
     items: resolved.items.map((item) => {
       const uploadCount = item.attachments.filter(
         (attachment) => !attachment.alreadyOnFile && !attachment.reuse,
@@ -3593,6 +3651,7 @@ export async function importFileAttachmentsAction(
   success?: string;
   created?: number;
   updated?: number;
+  failures?: FileAttachmentImportFailure[];
 }> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
   if (user.role !== "super_admin") {
@@ -3607,43 +3666,35 @@ export async function importFileAttachmentsAction(
     return { error: loaded.error };
   }
 
-  const resolved = resolveFileAttachmentsForImport(rows, loaded.context);
+  const resolved = resolveFileAttachmentsForImport(rows, loaded.context, dict);
+  const failures = resolved.failures;
+  const rowByNumber = new Map(rows.map((row) => [row.rowNumber, row]));
+  const failItem = (rowNumber: number, error: string) => {
+    const row = rowByNumber.get(rowNumber);
+    failures.push(
+      row ? fileAttachmentFailure(row, error) : { rowNumber, label: "", error },
+    );
+  };
 
-  if (!resolved.ok) {
-    if (resolved.code === "user") {
-      return {
-        error: t(dict.superAdmin.userNotFound, { name: resolved.value }),
-      };
-    }
-    if (resolved.code === "series") {
-      return {
-        error: t(dict.superAdmin.fileSeriesNotFound, {
-          name: resolved.value,
-        }),
-      };
-    }
-    return {
-      error: t(dict.superAdmin.fileResidentNotFound, { name: resolved.value }),
-    };
-  }
-
-  const nonCloudinaryUrl = resolved.items
-    .flatMap((item) => item.attachments)
-    .map((attachment) => attachment.storageUrl)
-    .find((url) => url && !isCloudinaryStorageUrl(url));
-  if (nonCloudinaryUrl) {
-    return {
-      error: t(dict.superAdmin.fileAttachmentsNotCloudinary, {
-        url: nonCloudinaryUrl,
-      }),
-    };
-  }
+  const items = resolved.items.filter((item) => {
+    const nonCloudinaryUrl = item.attachments
+      .map((attachment) => attachment.storageUrl)
+      .find((url) => url && !isCloudinaryStorageUrl(url));
+    if (!nonCloudinaryUrl) return true;
+    failItem(
+      item.rowNumber,
+      t(dict.superAdmin.fileAttachmentsNotCloudinary, { url: nonCloudinaryUrl }),
+    );
+    return false;
+  });
 
   let created = 0;
   let updated = 0;
 
+  // A failed upload fails the whole batch; the client then retries its rows
+  // one by one to find which document's image is the problem.
   const attachmentUpload = await uploadImportUrlsBySource(
-    resolved.items.flatMap((item) =>
+    items.flatMap((item) =>
       item.attachments
         .filter((attachment) => !attachment.alreadyOnFile && !attachment.reuse)
         .map((attachment) => attachment.storageUrl),
@@ -3655,8 +3706,8 @@ export async function importFileAttachmentsAction(
   }
   const uploadedBySource = attachmentUpload.bySource;
 
-  try {
-    for (const item of resolved.items) {
+  for (const item of items) {
+    try {
       const attachmentsToUpload = item.attachments.filter(
         (attachment) => !attachment.alreadyOnFile && !attachment.reuse,
       );
@@ -3790,10 +3841,14 @@ export async function importFileAttachmentsAction(
           )
         `;
       }
+    } catch (error) {
+      // One document's write failing must not stop the rest of the batch.
+      console.error("importFileAttachmentsAction failed:", error);
+      failItem(
+        item.rowNumber,
+        describeImportFailure(error, dict, dict.superAdmin.fileAttachmentsUploadFailed),
+      );
     }
-  } catch (error) {
-    console.error("importFileAttachmentsAction failed:", error);
-    return { error: dict.superAdmin.fileAttachmentsUploadFailed };
   }
 
   revalidatePath("/profile");
@@ -3814,5 +3869,6 @@ export async function importFileAttachmentsAction(
     success,
     created,
     updated,
+    failures,
   };
 }

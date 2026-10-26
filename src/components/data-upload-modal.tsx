@@ -36,6 +36,8 @@ export type ImportProgressCounts = {
 /** A row the import skipped; `rowNumber` is the file row (header = 1). */
 export type ImportFailure = {
   rowNumber: number;
+  /** All file rows behind this failure, when one item spans several rows. */
+  rowNumbers?: number[];
   label?: string;
   error: string;
 };
@@ -187,7 +189,9 @@ export function DataUploadModal<T>({
     const csv = buildCsvOfRows(
       fileContent,
       selectedFile.name,
-      failureResult.failures.map((failure) => failure.rowNumber),
+      failureResult.failures.flatMap(
+        (failure) => failure.rowNumbers ?? [failure.rowNumber],
+      ),
     );
     if (csv == null) return;
     const baseName = selectedFile.name.replace(/\.[^.]+$/, "");

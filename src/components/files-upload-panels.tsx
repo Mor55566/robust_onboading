@@ -12,6 +12,7 @@ import {
 import { useComplexContext } from "@/components/complex-context";
 import {
   DataUploadModal,
+  type ImportFailure,
   type ImportPreviewRow,
 } from "@/components/data-upload-modal";
 import { DevtoolsScriptGuideModal } from "@/components/devtools-script-guide-modal";
@@ -35,6 +36,68 @@ import {
   type FileImportRow,
   type FileTagImportRow,
 } from "@/lib/file-import";
+
+type BatchResult = {
+  error?: string;
+  created?: number;
+  updated?: number;
+  failures?: ImportFailure[];
+};
+
+/**
+ * Imports rows batch by batch without stopping at a failure: a batch that
+ * fails as a whole is retried one row at a time, so only the rows that really
+ * fail end up in the failures list (shown in red with a CSV of just them).
+ */
+async function importInBatches<Row extends { rowNumber: number }>(
+  rows: Row[],
+  batchSize: number,
+  importBatch: (batch: Row[]) => Promise<BatchResult>,
+  describeRow: (row: Row) => Omit<ImportFailure, "error">,
+  /** Shown for a row when the server action itself throws. */
+  fallbackError: string,
+  reportProgress: (
+    percent: number,
+    counts?: { done: number; total: number },
+  ) => void,
+) {
+  const total = rows.length;
+  reportProgress(0, { done: 0, total });
+  let created = 0;
+  let updated = 0;
+  const failures: ImportFailure[] = [];
+
+  function add(result: BatchResult) {
+    created += result.created ?? 0;
+    updated += result.updated ?? 0;
+    failures.push(...(result.failures ?? []));
+  }
+
+  for (let offset = 0; offset < rows.length; offset += batchSize) {
+    const batch = rows.slice(offset, offset + batchSize);
+    const result = await importBatch(batch).catch(
+      (): BatchResult => ({ error: fallbackError }),
+    );
+    if (result.error === undefined) {
+      add(result);
+    } else if (batch.length === 1) {
+      failures.push({ ...describeRow(batch[0]!), error: result.error });
+    } else {
+      for (const row of batch) {
+        const single = await importBatch([row]).catch(
+          (): BatchResult => ({ error: fallbackError }),
+        );
+        if (single.error === undefined) add(single);
+        else failures.push({ ...describeRow(row), error: single.error });
+      }
+    }
+    const done = Math.min(offset + batch.length, total);
+    reportProgress((done / total) * 100, { done, total });
+  }
+
+  failures.sort((a, b) => a.rowNumber - b.rowNumber);
+  return { created, updated, failures };
+}
 
 export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
   const { complexId, uploadStatus, refreshUploadStatus } = useComplexContext();
@@ -102,7 +165,16 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
     if (result.error) {
       return { error: result.error };
     }
-    return previewFileRows(rows);
+    const failed = new Map(
+      (result.failures ?? []).map((failure) => [failure.rowNumber, failure.error]),
+    );
+    return rows.map((row, index) => {
+      const preview = previewFileRows([row])[0]!;
+      const error = failed.get(row.rowNumber);
+      return error
+        ? { ...preview, key: `${preview.key}-${index}`, detail: error, action: "error" as const }
+        : { ...preview, key: `${preview.key}-${index}` };
+    });
   }
 
   async function handleTagsImport(rows: FileTagImportRow[]) {
@@ -132,26 +204,18 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
     ) => void,
   ) {
     setFilesMessage(null);
-    const total = rows.length;
-    reportProgress(0, { done: 0, total });
+    const { created, updated, failures } = await importInBatches(
+      rows,
+      10,
+      (batch) => importFilesAction(complexId, batch),
+      (row) => ({ rowNumber: row.rowNumber, label: row.title }),
+      dict.superAdmin.filesUploadFailed,
+      reportProgress,
+    );
 
-    // Batches run one at a time: Next.js queues server actions from the same
-    // client anyway, so "parallel" batches only delayed showing an error
-    // until every batch in the wave had finished.
-    const BATCH_SIZE = 10;
-    let created = 0;
-    let updated = 0;
-
-    for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
-      const batch = rows.slice(offset, offset + BATCH_SIZE);
-      const result = await importFilesAction(complexId, batch);
-      if (result.error) {
-        return { error: result.error };
-      }
-      created += result.created ?? 0;
-      updated += result.updated ?? 0;
-      const done = Math.min(offset + batch.length, total);
-      reportProgress((done / total) * 100, { done, total });
+    void refreshUploadStatus();
+    if (failures.length > 0) {
+      return { failures, succeeded: created + updated };
     }
 
     setFilesMessage({
@@ -164,7 +228,6 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
               update: 0,
             }),
     });
-    void refreshUploadStatus();
   }
 
   function previewAttachmentRows(
@@ -197,7 +260,16 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
       return previewAttachmentRows(rows);
     }
 
-    return result.items.map((item) => {
+    const failedRows: ImportPreviewRow[] = (result.failures ?? []).map(
+      (failure) => ({
+        key: `file-attachment-failed-${failure.rowNumber}`,
+        label: failure.label,
+        detail: failure.error,
+        action: "error",
+      }),
+    );
+
+    return [...failedRows, ...result.items.map((item) => {
       const bits = [
         `series: ${item.externalId}`,
         `v${item.version}`,
@@ -224,7 +296,7 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
         detail: bits.join(" · "),
         action: item.action,
       };
-    });
+    })];
   }
 
   async function handleAttachmentsImport(
@@ -235,26 +307,24 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
     ) => void,
   ) {
     setAttachmentsMessage(null);
-    const total = rows.length;
-    reportProgress(0, { done: 0, total });
+    // Small batches: every row re-uploads its images, so a big batch left the
+    // progress bar at 0% for minutes.
+    const { created, updated, failures } = await importInBatches(
+      rows,
+      5,
+      (batch) => importFileAttachmentsAction(complexId, batch),
+      (row) => ({
+        rowNumber: row.rowNumber,
+        rowNumbers: row.sourceRowNumbers,
+        label: `${row.externalId} · v${row.version}`,
+      }),
+      dict.superAdmin.fileAttachmentsUploadFailed,
+      reportProgress,
+    );
 
-    // Small batches, one at a time: every row re-uploads its images, so a
-    // big wave left the progress bar at 0% for minutes, and Next.js queues
-    // server actions from the same client anyway.
-    const BATCH_SIZE = 5;
-    let created = 0;
-    let updated = 0;
-
-    for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
-      const batch = rows.slice(offset, offset + BATCH_SIZE);
-      const result = await importFileAttachmentsAction(complexId, batch);
-      if (result.error) {
-        return { error: result.error };
-      }
-      created += result.created ?? 0;
-      updated += result.updated ?? 0;
-      const done = Math.min(offset + batch.length, total);
-      reportProgress((done / total) * 100, { done, total });
+    void refreshUploadStatus();
+    if (failures.length > 0) {
+      return { failures, succeeded: created + updated };
     }
 
     setAttachmentsMessage({
@@ -270,7 +340,6 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
               update: 0,
             }),
     });
-    void refreshUploadStatus();
   }
 
   return (
