@@ -9,6 +9,7 @@ import {
   downloadTextFile,
   type ImportParseError,
 } from "@/lib/data-import";
+import { isZipFile, xlsxToCsv } from "@/lib/xlsx-reader";
 
 export type DataUploadCopy = {
   title: string;
@@ -216,9 +217,24 @@ export function DataUploadModal<T>({
 
     setIsReading(true);
     try {
-      const content = await file.text();
+      // Real .xlsx files are ZIP archives: convert their first sheet to CSV
+      // so every parser below reads them like a CSV upload.
+      const buffer = await file.arrayBuffer();
+      let content: string;
+      let fileName = file.name;
+      if (isZipFile(new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength)))) {
+        const csv = await xlsxToCsv(buffer);
+        if (csv === null) {
+          setError(copy.invalid);
+          return;
+        }
+        content = csv;
+        fileName = fileName.replace(/\.xlsx?$/i, "") + ".csv";
+      } else {
+        content = await file.text();
+      }
       setFileContent(content);
-      const parsed = parse(content, file.name);
+      const parsed = parse(content, fileName);
       if ("error" in parsed) {
         setError(
           parsed.message ??
