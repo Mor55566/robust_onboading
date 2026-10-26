@@ -294,7 +294,7 @@ export const en = {
       "This script is also saved in the project at scripts/export_document_files.js.",
     filesUploadTitle: "Upload documents",
     filesUploadSubtitle:
-      "Download the template, fill in documents, then upload. Columns: id, complex (נכס), name (שם), tag (תגית), linked entity (שייך מסמך ל). This only creates or updates the document’s series entry — no file version is created. The id is saved as external id; the name as its title; the tag on the series. A value like “דייר - מנדיי” is matched to that resident; a value with “(בארכיון)” is ignored.",
+      "Download the template, fill in documents, then upload. Columns: id, name (שם), tag (תגית), linked entity (שייך מסמך ל), and optional complex (נכס). Documents always go to the complex selected at the top; if the complex column names a different one, the upload is blocked. This only creates or updates the document’s series entry — no file version is created. The id is saved as external id; the name as its title; the tag on the series. A value like “דייר - מנדיי” is matched to that resident; a value with “(בארכיון)” is ignored.",
     filesUploadEmpty: "The file has no document rows.",
     filesUploadInvalid:
       "Could not read this file. Use the CSV or Excel template.",
