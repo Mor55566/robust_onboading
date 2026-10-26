@@ -99,6 +99,22 @@ async function importInBatches<Row extends { rowNumber: number }>(
   return { created, updated, failures };
 }
 
+/** One failure per attachment row the parser left out for a non-Cloudinary URL. */
+function rejectedAttachmentFailures(
+  rows: FileAttachmentImportDocument[],
+  dict: Dictionary,
+): ImportFailure[] {
+  return rows.flatMap((row) =>
+    (row.rejectedAttachments ?? []).map((rejected) => ({
+      rowNumber: rejected.rowNumber,
+      label: `${row.externalId} · v${row.version}`,
+      error: t(dict.superAdmin.fileAttachmentsNotCloudinary, {
+        url: rejected.url,
+      }),
+    })),
+  );
+}
+
 export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
   const { complexId, uploadStatus, refreshUploadStatus } = useComplexContext();
   const [tagsUploadOpen, setTagsUploadOpen] = useState(false);
@@ -260,14 +276,15 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
       return previewAttachmentRows(rows);
     }
 
-    const failedRows: ImportPreviewRow[] = (result.failures ?? []).map(
-      (failure) => ({
-        key: `file-attachment-failed-${failure.rowNumber}`,
-        label: failure.label,
-        detail: failure.error,
-        action: "error",
-      }),
-    );
+    const failedRows: ImportPreviewRow[] = [
+      ...(result.failures ?? []),
+      ...rejectedAttachmentFailures(rows, dict),
+    ].map((failure, index) => ({
+      key: `file-attachment-failed-${failure.rowNumber}-${index}`,
+      label: failure.label ?? "",
+      detail: failure.error,
+      action: "error",
+    }));
 
     return [...failedRows, ...result.items.map((item) => {
       const bits = [
@@ -321,6 +338,13 @@ export function FilesUploadPanels({ dict }: { dict: Dictionary }) {
       dict.superAdmin.fileAttachmentsUploadFailed,
       reportProgress,
     );
+    const failedRowNumbers = new Set(
+      failures.flatMap((failure) => failure.rowNumbers ?? [failure.rowNumber]),
+    );
+    for (const rejected of rejectedAttachmentFailures(rows, dict)) {
+      if (!failedRowNumbers.has(rejected.rowNumber)) failures.push(rejected);
+    }
+    failures.sort((a, b) => a.rowNumber - b.rowNumber);
 
     void refreshUploadStatus();
     if (failures.length > 0) {

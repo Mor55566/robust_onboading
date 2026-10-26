@@ -7,7 +7,6 @@ import {
   isCopyableImageAttachment,
   isUnlinkedImportedResident,
   normalizeImportedResidentName,
-  parseFileAttachmentNotCloudinaryMessage,
   parseFileAttachmentsImportContent,
   parseFilesImportContent,
   resolveFileAttachmentImportRows,
@@ -399,17 +398,17 @@ describe("document attachment import", () => {
     assert.equal(isCloudinaryStorageUrl("https://example.com/photo.jpeg"), false);
   });
 
-  it("rejects storage_url values that are not Cloudinary URLs", () => {
+  it("leaves out storage_url values that are not Cloudinary URLs and reports their rows", () => {
     const parsed = parseFileAttachmentsImportContent(
-      "external_id,storage_url\n655dbe604d69d1fff0721cdd,https://example.com/photo.jpeg\n",
+      "external_id,storage_url\n655dbe604d69d1fff0721cdd,https://example.com/photo.jpeg\n655dbe604d69d1fff0721cdd,https://res.cloudinary.com/gantzi/image/upload/photo.jpeg\n",
       "files.csv",
     );
-    assert.equal("error" in parsed, true);
-    if (!("error" in parsed)) return;
-    assert.equal(parsed.error, "invalidRow");
-    const notCloudinary = parseFileAttachmentNotCloudinaryMessage(parsed.message);
-    assert.equal(notCloudinary?.row, "2");
-    assert.equal(notCloudinary?.url, "https://example.com/photo.jpeg");
+    assert.equal("rows" in parsed, true);
+    if (!("rows" in parsed)) return;
+    assert.equal(parsed.rows[0]?.attachments.length, 1);
+    assert.deepEqual(parsed.rows[0]?.rejectedAttachments, [
+      { rowNumber: 2, url: "https://example.com/photo.jpeg" },
+    ]);
   });
 
   it("still skips CSV URLs even when they are not Cloudinary", () => {

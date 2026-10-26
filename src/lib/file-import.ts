@@ -591,6 +591,8 @@ export type FileAttachmentImportDocument = {
   rowNumber: number;
   /** Every file row (header = 1) this document was built from — one per attachment. */
   sourceRowNumbers?: number[];
+  /** Attachment rows left out because their storage_url isn't on Cloudinary. */
+  rejectedAttachments?: { rowNumber: number; url: string }[];
   externalId: string;
   tag: string;
   resident: string;
@@ -984,10 +986,13 @@ export function parseFileAttachmentsImportContent(
       storageUrl,
     };
     if (storageUrl && !isCsvAttachment(attachment) && !isCloudinaryStorageUrl(storageUrl)) {
-      return {
-        error: "invalidRow",
-        message: fileAttachmentNotCloudinaryMessage(rowNumber, storageUrl),
-      };
+      // Leave just this attachment out; the import reports it at the end
+      // instead of rejecting the whole file.
+      document.rejectedAttachments = [
+        ...(document.rejectedAttachments ?? []),
+        { rowNumber, url: storageUrl },
+      ];
+      continue;
     }
     if (isCopyableImageAttachment(attachment)) {
       document.attachments.push({
