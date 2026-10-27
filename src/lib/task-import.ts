@@ -224,6 +224,9 @@ export function parseTasksImportContent(
   const resolvedByIndex = findHeaderIndex(header, [
     'נסגר ע"י',
     "נסגר ע״י",
+    // Visitt's issues export spells it with the gershayim at the end.
+    'נסגר עי"',
+    "נסגר עי״",
     "נסגר על ידי",
     "closed by",
     "resolved by",

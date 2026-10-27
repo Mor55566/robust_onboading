@@ -138,4 +138,40 @@ describe("tasks CSV import", () => {
       assert.equal(parseStatus(value), "canceled", value);
     }
   });
+
+  it("parses a canceled row from the full Visitt issues export", () => {
+    const header = [
+      "#", "מזהה", "קישור", "מספר קריאה", "סוג", "מקור", "בניין", "כתובת הבניין",
+      "מיקום", "אתר - כתובת", 'אתר - מסד"', "קטגוריה", "תת קטגוריה", "כותרת",
+      "תיאור", "מדווח", "משתמש משויך", "קבלן משנה משויך", "דייר", "אנשי קשר",
+      "אנשי קשר - מספרי טלפון", 'נסגר עי"', 'בוטל עי"', "תאריך יצירה",
+      "תאריך אחרון לטיפול", "תאריך סגירה", "תאריך ביטול", "זמן סגירה בדקות",
+      "זמן תגובה בדקות", "זמן חריגה בדקות", "דחיפות", "נכס", "אזור", "סטאטוס",
+      "הערות סטטוס", "שעות עבודה", "מזהה חיצוני", "תמונות הקריאה",
+      "תמונות התיקון", "צ'קליסט", "סה״כ לחיוב", "הודעות",
+    ];
+    const row = (status: string, closedBy: string) => [
+      "5068", "664ec89e02e1238d0786a8da", "https://app.visitt.io/issue/664ec89e02e1238d0786a8da",
+      "254585", "קריאה יזומה", "Visitt", "בניין B", "", "בניין B / מעלית משא / BGL9",
+      "", "", "אחזקת שבר", "מעליות", "",
+      "בהמשך לבדיקת אפיק בתאריך 20/05/24:\nתא מעלית מדופן", "אורה סרטורי",
+      "סמיון  קיפניס ;אורה סרטורי;רמיל יאחיב אליהו", "", "", "", "", closedBy,
+      "אורה סרטורי", "23-05-2024 07:39:58", "07-07-2024 14:00:00", "",
+      "26-05-2024 07:02:12", "", "4283", "", "", "TOU Towers", "", status,
+      "• [מבוטל - 26/5/2024, 7:02] לר", "", "", "", "", "", "0.00", "",
+    ];
+    const quote = (cell: string) => `"${cell.replaceAll('"', '""')}"`;
+    const csv =
+      "﻿" +
+      [header, row("מבוטל", ""), row("סגור", "דני כהן")]
+        .map((cells) => cells.map(quote).join(","))
+        .join("\n");
+    const parsed = parseTasksImportContent(csv, "visitt-issues.csv");
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+    assert.equal(parsed.rows[0]?.status, "canceled");
+    assert.equal(parsed.rows[0]?.statusProvided, true);
+    assert.equal(parsed.rows[0]?.callNumber, "254585");
+    assert.equal(parsed.rows[1]?.status, "closed");
+    assert.equal(parsed.rows[1]?.resolvedBy, "דני כהן");
+  });
 });
