@@ -80,6 +80,45 @@ describe("mission history checklist blob parser", () => {
     assert.ok(items.every((item) => item.location === "מינוס 1 < מינוס 1 / חניון"));
   });
 
+  it("imports a sprinkler-pump check with its numeric readings as answered items", () => {
+    const blob = [
+      "מינוס 1 < מינוס 1 / חניון ",
+      "\tלנטרל מערכת גלוי אש: V ",
+      "\tוודא שיחידת משאבת מתזים  נקיה מגופים זרים: V ",
+      "\tלחץ מים בזמן הבדיקה: 256 ",
+      "\tהנע משאבה למשך 10 דקות: V ",
+      "\tוודא שאין נזלות מים: V ",
+      "\tוודא שאין חימום יתר: V ",
+      "\tלעביר את המשאבה למצב אוטומט אחרי בדיקה: V ",
+      "\tלהחזיר מערכת גילוי אש למצב רגיל: V ",
+      "\tמתח חשמל פזאה R: 398 ",
+      "\tמתח חשמל פזאה S: 397 ",
+      "\tמתח חשמל פזאה T: 397 ",
+      "\tזרם בפזאה R: 128 ",
+      "\tזרם בפזאה S: 121 ",
+      "\tזרם בפזאה T: 132",
+    ].join("\n");
+    const items = parseMissionHistoryChecklistBlob(blob);
+    assert.equal(items.length, 14);
+    assert.ok(items.every((item) => item.location === "מינוס 1 < מינוס 1 / חניון"));
+    assert.ok(items.every((item) => item.isCompleted));
+    assert.deepEqual(
+      items
+        .filter((item) => item.itemType === "number")
+        .map((item) => [item.label, item.answerValue]),
+      [
+        ["לחץ מים בזמן הבדיקה", "256"],
+        ["מתח חשמל פזאה R", "398"],
+        ["מתח חשמל פזאה S", "397"],
+        ["מתח חשמל פזאה T", "397"],
+        ["זרם בפזאה R", "128"],
+        ["זרם בפזאה S", "121"],
+        ["זרם בפזאה T", "132"],
+      ],
+    );
+    assert.equal(items.filter((item) => item.itemType === "checklist").length, 7);
+  });
+
   it("extracts a unit suffix from a numeric value", () => {
     const blob = "מיקום\n\tארגז ג'ל: 15יח";
     const items = parseMissionHistoryChecklistBlob(blob);
@@ -166,11 +205,11 @@ describe("parseMissionHistoryImportContent", () => {
       ]),
       [
         ["מינוס 1 < מינוס 1 / חניון", 0, "לנטרל מערכת גלוי אש", "checklist", null, true],
-        ["מינוס 1 < מינוס 1 / חניון", 1, "לחץ מים בזמן הבדיקה", "number", "256", false],
-        ["מינוס 1 < מינוס 1 / חניון", 2, "מתח חשמל פזאה R", "number", "398", false],
+        ["מינוס 1 < מינוס 1 / חניון", 1, "לחץ מים בזמן הבדיקה", "number", "256", true],
+        ["מינוס 1 < מינוס 1 / חניון", 2, "מתח חשמל פזאה R", "number", "398", true],
         ["מינוס 1 < מינוס 1 / חניון", 3, "וודא שאין נזלות מים", "checklist", null, false],
         ["מינוס 1 < מינוס 1 / חניון", 4, "לנטרל מערכת גלוי אש", "checklist", null, true],
-        ["בניין A / קומה 37 < קומה 37 / מתקן ניקוי", 5, "האם האינטרקום עובד?", "options", "כן", false],
+        ["בניין A / קומה 37 < קומה 37 / מתקן ניקוי", 5, "האם האינטרקום עובד?", "options", "כן", true],
         ["בניין A / קומה 37 < קומה 37 / מתקן ניקוי", 6, "הערות", "text", null, false],
       ],
     );

@@ -196,6 +196,7 @@ function parseNumericValue(
   };
 }
 
+/** An answered item (number, option, text) counts as done; "-" and "X" don't. */
 export function inferChecklistItemFromValue(rawValue: string): {
   itemType: MissionHistoryChecklistItemType;
   answerValue: string | null;
@@ -241,7 +242,7 @@ export function inferChecklistItemFromValue(rawValue: string): {
     return {
       itemType: "number",
       answerValue: numeric.numeric,
-      isCompleted: false,
+      isCompleted: true,
       numberUnit: numeric.unit,
       options: [],
     };
@@ -252,7 +253,7 @@ export function inferChecklistItemFromValue(rawValue: string): {
     return {
       itemType: "options",
       answerValue: value,
-      isCompleted: false,
+      isCompleted: true,
       numberUnit: null,
       options: optionPair,
     };
@@ -261,7 +262,7 @@ export function inferChecklistItemFromValue(rawValue: string): {
   return {
     itemType: "text",
     answerValue: value,
-    isCompleted: false,
+    isCompleted: true,
     numberUnit: null,
     options: [],
   };

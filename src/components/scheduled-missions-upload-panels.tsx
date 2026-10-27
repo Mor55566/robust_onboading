@@ -31,6 +31,7 @@ import {
   buildMissionHistoryExcelTemplate,
   parseMissionHistoryImportContent,
   type MissionHistoryImportRow,
+  type ResolvedMissionHistoryImportRow,
 } from "@/lib/mission-history-import";
 
 export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
@@ -109,18 +110,26 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     const checksByExternalId = new Map(
       rows.map((row) => [row.externalId, row.checklistItems.length]),
     );
-    const result = await previewMissionHistoryImportAction(
-      complexId,
-      rows.map((row) => ({
-        ...row,
-        checklistItems: row.checklistItems.filter(
-          (item, index, items) =>
-            items.findIndex((other) => other.location === item.location) === index,
-        ),
-      })),
-    );
-    if ("error" in result) return result;
-    return result.rows.map((row) => {
+    const slimRows = rows.map((row) => ({
+      ...row,
+      checklistItems: row.checklistItems.filter(
+        (item, index, items) =>
+          items.findIndex((other) => other.location === item.location) === index,
+      ),
+    }));
+    // Sent in batches: hosts cap server-action bodies (Vercel ~4.5MB) and a
+    // full export still exceeds that even when slimmed.
+    const PREVIEW_BATCH_SIZE = 50;
+    const resolvedRows: ResolvedMissionHistoryImportRow[] = [];
+    for (let offset = 0; offset < slimRows.length; offset += PREVIEW_BATCH_SIZE) {
+      const result = await previewMissionHistoryImportAction(
+        complexId,
+        slimRows.slice(offset, offset + PREVIEW_BATCH_SIZE),
+      );
+      if ("error" in result) return result;
+      resolvedRows.push(...result.rows);
+    }
+    return resolvedRows.map((row) => {
       const checkCount = checksByExternalId.get(row.externalId) ?? 0;
       const detail =
         row.classification === "skip"
