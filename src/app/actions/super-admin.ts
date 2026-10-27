@@ -2977,50 +2977,40 @@ export async function importMissionHistoryAction(
       (url) => !sourceAttachmentByUrl.has(url),
     );
     if (missingUrls.length > 0) {
+      let settled: SettledUpload[];
       try {
-        const settled = await uploadTaskAttachmentsFromUrlsSettled(missingUrls, {
+        settled = await uploadTaskAttachmentsFromUrlsSettled(missingUrls, {
           concurrency: 8,
         });
-        for (const [index, result] of settled.entries()) {
-          const url = missingUrls[index]!;
-          if (result.ok) {
-            sourceAttachmentByUrl.set(url, {
-              file_name: result.file.file_name,
-              mime_type: result.file.mime_type,
-              storage_url: result.file.storage_url,
-            });
-            continue;
-          }
-          // A photo deleted at the source (404 etc.) will never copy: import
-          // the mission without it. Transient failures still stop the batch.
-          if (
-            result.error instanceof CloudinaryUploadError &&
-            !result.error.retryable
-          ) {
-            console.warn("importMissionHistoryAction: skipping image", {
-              url,
-              error: result.error.message,
-            });
-            continue;
-          }
-          throw result.error;
-        }
       } catch (error) {
         if (error instanceof CloudinaryConfigError) {
           return { error: dict.errors.cloudinaryNotConfigured };
         }
-        const detail =
-          error instanceof CloudinaryUploadError
-            ? error.message
-            : error instanceof Error
-              ? error.message
-              : "Cloudinary upload failed";
-        const match = detail.match(/https?:\/\/\S+/i);
-        return {
-          error: t(dict.superAdmin.imageImportFailed, {
-            url: match?.[0] ?? detail,
-          }),
-        };
+        throw error;
+      }
+      for (const [index, result] of settled.entries()) {
+        const url = missingUrls[index]!;
+        if (result.ok) {
+          sourceAttachmentByUrl.set(url, {
+            file_name: result.file.file_name,
+            mime_type: result.file.mime_type,
+            storage_url: result.file.storage_url,
+          });
+          continue;
+        }
+        const message =
+          result.error instanceof Error ? result.error.message : String(result.error);
+        // A missing upload permission fails every image — stop instead of
+        // importing every mission without its photos.
+        if (/missing permissions|actions=\["create"\]|missing upload permission/i.test(message)) {
+          return { error: dict.errors.cloudinaryPermissionDenied };
+        }
+        // Any other image that can't be copied (deleted at the source, still
+        // failing after retries…) is left out; the mission itself imports.
+        console.warn("importMissionHistoryAction: skipping image", {
+          url,
+          error: message,
+        });
       }
     }
   }
