@@ -2978,13 +2978,32 @@ export async function importMissionHistoryAction(
     );
     if (missingUrls.length > 0) {
       try {
-        const uploaded = await uploadUrlsWithSources(missingUrls);
-        for (const file of uploaded) {
-          sourceAttachmentByUrl.set(file.source_storage_url, {
-            file_name: file.file_name,
-            mime_type: file.mime_type,
-            storage_url: file.storage_url,
-          });
+        const settled = await uploadTaskAttachmentsFromUrlsSettled(missingUrls, {
+          concurrency: 8,
+        });
+        for (const [index, result] of settled.entries()) {
+          const url = missingUrls[index]!;
+          if (result.ok) {
+            sourceAttachmentByUrl.set(url, {
+              file_name: result.file.file_name,
+              mime_type: result.file.mime_type,
+              storage_url: result.file.storage_url,
+            });
+            continue;
+          }
+          // A photo deleted at the source (404 etc.) will never copy: import
+          // the mission without it. Transient failures still stop the batch.
+          if (
+            result.error instanceof CloudinaryUploadError &&
+            !result.error.retryable
+          ) {
+            console.warn("importMissionHistoryAction: skipping image", {
+              url,
+              error: result.error.message,
+            });
+            continue;
+          }
+          throw result.error;
         }
       } catch (error) {
         if (error instanceof CloudinaryConfigError) {
@@ -3011,10 +3030,12 @@ export async function importMissionHistoryAction(
     taskId: string,
     urls: string[],
   ) {
-    const files = urls
-      .map((url) => sourceAttachmentByUrl.get(url))
-      .filter((file): file is SourceAttachmentMeta => file != null)
-      .map((file, index) => ({ ...file, source_storage_url: urls[index]! }));
+    // Pair each file with its URL before filtering: skipped (deleted) images
+    // would otherwise shift the source URLs of the ones after them.
+    const files = urls.flatMap((url) => {
+      const file = sourceAttachmentByUrl.get(url);
+      return file ? [{ ...file, source_storage_url: url }] : [];
+    });
     if (files.length === 0) return;
 
     const ids = files.map(() => crypto.randomUUID());
