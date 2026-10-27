@@ -4,6 +4,7 @@ import {
   buildTasksCsvTemplate,
   parseTasksImportContent,
   parseChecklistItems,
+  parseStatus,
   resolveTaskImportRows,
   splitUrls,
 } from "./task-import";
@@ -130,5 +131,11 @@ describe("tasks CSV import", () => {
     assert.ok("error" in parsed, JSON.stringify(parsed));
     assert.equal(parsed.error, "invalid");
     assert.equal(parsed.message, "__missing_description__");
+  });
+
+  it("maps Hebrew canceled statuses to canceled", () => {
+    for (const value of ["מבוטל", "מבוטלת", "בוטל", "בוטלה", " מבוטל "]) {
+      assert.equal(parseStatus(value), "canceled", value);
+    }
   });
 });

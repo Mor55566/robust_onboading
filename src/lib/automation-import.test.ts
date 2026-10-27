@@ -27,6 +27,20 @@ describe("automation CSV import", () => {
     assert.deepEqual(parsed.rows[0]?.subcategoryNames, ["חשמל", "תאורה"]);
   });
 
+  it("drops the category filter when 'אין קטגוריה' is selected", () => {
+    const csv = [
+      "index,trigger_type,buildings,categories,action_type,users,rule_preview,action_preview,needs_review",
+      '14,נפתחת קריאה,"בניין A | בניין B","אחזקת שבר | אין קטגוריה",משתמשים שיותראו,סמיון קיפניס,"בניין A | בניין B>אחזקת שבר | אין קטגוריה",סמיון קיפניס,no',
+    ].join("\n");
+    const parsed = parseAutomationsImportContent(csv, "automations.csv");
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+    assert.equal(parsed.rows[0]?.incompleteReason, "");
+    assert.deepEqual(parsed.rows[0]?.buildingNames, ["בניין A", "בניין B"]);
+    assert.deepEqual(parsed.rows[0]?.categoryNames, []);
+    assert.deepEqual(parsed.rows[0]?.subcategoryNames, []);
+    assert.equal(parsed.rows[0]?.actionType, "notify_users");
+  });
+
   it("rejects rows whose +N values were not exported", () => {
     const csv = [
       "index,trigger_type,action_type,rule_preview,action_preview,hidden_values,needs_review",

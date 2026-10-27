@@ -147,11 +147,15 @@ export function parseAutomationsImportContent(
       ...modalBuildings,
       ...(hierarchy.length >= 2 ? splitComma(hierarchy[0] ?? "") : []),
     ]);
-    const categoryNames = unique([
+    const rawCategoryNames = unique([
       ...modalCategories,
       ...(hierarchy.length >= 2 ? splitComma(hierarchy[1] ?? "") : []),
-    ]).filter((name) => normalize(name) !== "אין קטגוריה");
-    const subcategoryNames = hierarchy.length >= 3 ? splitComma(hierarchy.slice(2).join(">")) : [];
+    ]);
+    // 'אין קטגוריה' can't be combined with specific categories, so the rule
+    // drops its category filter and runs on every opened call (with or without a category).
+    const hasNoCategory = rawCategoryNames.some((name) => normalize(name) === "אין קטגוריה");
+    const categoryNames = hasNoCategory ? [] : rawCategoryNames;
+    const subcategoryNames = !hasNoCategory && hierarchy.length >= 3 ? splitComma(hierarchy.slice(2).join(">")) : [];
     const actionPreview = get("action_preview");
     const rawUsers = get("users");
     const userNames = actionType === "set_urgency"
@@ -159,11 +163,7 @@ export function parseAutomationsImportContent(
       : splitComma(normalize(rawUsers) === "בחר משתמש" ? actionPreview : rawUsers || actionPreview);
     const hidden = get("hidden_values");
     const needsReview = normalize(get("needs_review")) === "yes";
-    const hasNoCategory = /אין קטגוריה/.test(get("categories")) || /אין קטגוריה/.test(rulePreview);
-    const incompleteReason = [
-      needsReview || hidden ? `חסרים ערכים מוסתרים (${hidden || "+N"})` : "",
-      hasNoCategory ? "המסנן ‘אין קטגוריה’ אינו נתמך במבנה האוטומציות הנוכחי" : "",
-    ].filter(Boolean).join("; ");
+    const incompleteReason = needsReview || hidden ? `חסרים ערכים מוסתרים (${hidden || "+N"})` : "";
 
     rows.push({
       rowNumber: i + 1,

@@ -377,7 +377,8 @@ export function parseStatus(value: string): TaskStatus {
     normalized === "closed" ||
     normalized === "סגור" ||
     normalized === "סגורה" ||
-    normalized === "נסגר"
+    normalized === "נסגר" ||
+    normalized === "נסגרה"
   ) {
     return "closed";
   }
@@ -385,7 +386,9 @@ export function parseStatus(value: string): TaskStatus {
     normalized === "canceled" ||
     normalized === "cancelled" ||
     normalized === "בוטל" ||
-    normalized === "בוטלה"
+    normalized === "בוטלה" ||
+    normalized === "מבוטל" ||
+    normalized === "מבוטלת"
   ) {
     return "canceled";
   }
