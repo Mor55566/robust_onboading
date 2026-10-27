@@ -263,7 +263,10 @@ export function DataUploadModal<T>({
       } else {
         setError(copy.invalid);
       }
-    } catch {
+    } catch (error) {
+      // Server-action failures (e.g. a body over the host's size limit) land
+      // here too, so keep the real cause visible for debugging.
+      console.error("DataUploadModal: failed to read or preview file", error);
       setError(copy.invalid);
     } finally {
       setIsReading(false);

@@ -103,9 +103,18 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     const issues = checkMissionHistoryRows(rows);
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
-    const result = await previewMissionHistoryImportAction(complexId, rows);
+    // Checklist items are most of the payload (a year's export is ~15MB) and the
+    // preview only needs their count, so they stay on the client.
+    const checksByExternalId = new Map(
+      rows.map((row) => [row.externalId, row.checklistItems.length]),
+    );
+    const result = await previewMissionHistoryImportAction(
+      complexId,
+      rows.map((row) => ({ ...row, checklistItems: [] })),
+    );
     if ("error" in result) return result;
     return result.rows.map((row) => {
+      const checkCount = checksByExternalId.get(row.externalId) ?? 0;
       const detail =
         row.classification === "skip"
           ? row.skipReason === "externalIdConflict"
@@ -119,8 +128,8 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
               row.status === "closed"
                 ? dict.superAdmin.missionHistoryStatusDone
                 : dict.superAdmin.missionHistoryStatusNotDone,
-              row.checklistItems.length > 0
-                ? `${row.checklistItems.length} ${dict.superAdmin.missionHistoryChecksLabel}`
+              checkCount > 0
+                ? `${checkCount} ${dict.superAdmin.missionHistoryChecksLabel}`
                 : null,
             ]
               .filter(Boolean)
