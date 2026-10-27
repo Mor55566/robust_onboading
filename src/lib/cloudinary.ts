@@ -279,6 +279,38 @@ function mimeFromContentType(contentType: string | null, fileName: string): stri
   return "image/jpeg";
 }
 
+function ownCloudName(): string {
+  const { cloudName } = getCredentials();
+  return cloudName?.toLowerCase() ?? "";
+}
+
+/**
+ * True when the URL is already a delivery URL in this project's Cloudinary
+ * account — copying it again would only pay for a duplicate.
+ */
+export function isOwnCloudinaryUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)cloudinary\.com$/i.test(parsed.hostname)) return false;
+    const cloud = ownCloudName();
+    if (!cloud) return false;
+    const path = parsed.pathname.toLowerCase();
+    return path.startsWith(`/${cloud}/`) && !path.includes("/gantzi/");
+  } catch {
+    return false;
+  }
+}
+
+/** File metadata for a URL that is used as-is instead of being re-uploaded. */
+export function describeStoredUrl(url: string): UploadedFile {
+  const fileName = fileNameFromUrl(url);
+  return {
+    file_name: fileName,
+    mime_type: mimeFromContentType(null, fileName),
+    storage_url: url,
+  };
+}
+
 // Without these, one source URL or upload that never answers keeps the
 // whole import request open forever and the UI never sees an error.
 const REMOTE_DOWNLOAD_TIMEOUT_MS = 30_000;

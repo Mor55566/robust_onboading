@@ -87,6 +87,9 @@ export const he: Dictionary = {
     uploadSuccess: "יובאו {count} קריאות",
     uploadSuccessDetailed:
       "יובאו {created} קריאות חדשות, עודכנו {updated}",
+    uploadSuccessUnchanged:
+      "יובאו {created} קריאות חדשות, עודכנו {updated}, {unchanged} ללא שינוי (לא נכתבו מחדש)",
+    uploadPreviewExisting: "כבר קיימת בקומפלקס — תעודכן רק אם יש שינוי",
     uploadRowError: "שורה {row}: {message}",
     invalidCallNumber:
       "מספר הקריאה \"{callNumber}\" אינו תקין. מספר קריאה חייב להכיל ספרות בלבד.",

@@ -13,6 +13,8 @@ import {
   CloudinaryConfigError,
   CloudinaryUploadError,
   deleteCloudinaryByUrls,
+  describeStoredUrl,
+  isOwnCloudinaryUrl,
   uploadTaskAttachmentsFromUrls,
   uploadTaskAttachmentsFromUrlsSettled,
   type SettledUpload,
@@ -1318,6 +1320,38 @@ export type TaskImportFailure = {
 };
 
 /**
+ * Which of these call numbers already belong to a ticket in this complex, so
+ * the upload preview shows "update" for them instead of "create".
+ */
+export async function previewTaskImportAction(
+  complexId: string,
+  callNumbers: string[],
+): Promise<{ error?: string; existing?: string[] }> {
+  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
+  if (user.role !== "super_admin") {
+    return { error: dict.errors.unauthorized };
+  }
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.admin.complexNotFound };
+
+  const numeric = [
+    ...new Set(
+      callNumbers.map((value) => value.trim()).filter((value) => /^\d+$/.test(value)),
+    ),
+  ];
+  if (numeric.length === 0) return { existing: [] };
+
+  const rows = await sql`
+    SELECT DISTINCT call_number
+    FROM tasks
+    WHERE type = 'task'
+      AND call_number = ANY(${numeric}::bigint[])
+      AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${scopedComplexId})
+  `;
+  return { existing: rows.map((row) => String(row.call_number)) };
+}
+
+/**
  * Imports one batch of ticket rows. A row that fails (an image that can't be
  * copied, a DB error) is reported in `failures` and the rest still import;
  * `error` is only set when nothing in the batch could be imported.
@@ -1330,6 +1364,8 @@ export async function importTasksAction(
   success?: string;
   created?: number;
   updated?: number;
+  /** Existing tickets whose row matched what's already stored — nothing written. */
+  unchanged?: number;
   failures?: TaskImportFailure[];
 }> {
   const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
@@ -1380,6 +1416,7 @@ export async function importTasksAction(
     categories,
     existingTasks,
     existingSourceRows,
+    existingStorageRows,
   ] = await Promise.all([
     sql`SELECT id, name, complex_id FROM buildings WHERE complex_id = ${scopedComplexId} ORDER BY name ASC`,
     sql`
@@ -1419,6 +1456,15 @@ export async function importTasksAction(
           INNER JOIN task_attachments ta ON ta.id = tas.task_attachment_id
           WHERE tas.source_system = ${ATTACHMENT_SOURCE_SYSTEM}
             AND tas.source_storage_url = ANY(${batchSourceUrls}::text[])
+        `
+      : Promise.resolve([] as Record<string, unknown>[]),
+    // A "source" URL that is already a stored attachment (e.g. a re-export
+    // of tickets imported earlier) is reused as-is, not copied again.
+    batchSourceUrls.length > 0
+      ? sql`
+          SELECT DISTINCT ON (storage_url) storage_url, file_name, mime_type
+          FROM task_attachments
+          WHERE storage_url = ANY(${batchSourceUrls}::text[])
         `
       : Promise.resolve([] as Record<string, unknown>[]),
   ]);
@@ -1537,6 +1583,13 @@ export async function importTasksAction(
     const callNumber = row.call_number == null ? "" : String(row.call_number);
     if (callNumber) existingByCallNumber.set(callNumber, row.id as string);
   }
+  for (const row of existingStorageRows) {
+    sourceAttachmentByUrl.set(row.storage_url as string, {
+      file_name: row.file_name as string,
+      mime_type: row.mime_type as string,
+      storage_url: row.storage_url as string,
+    });
+  }
   for (const row of existingSourceRows) {
     sourceAttachmentByUrl.set(row.source_storage_url as string, {
       file_name: row.file_name as string,
@@ -1544,6 +1597,104 @@ export async function importTasksAction(
       storage_url: row.storage_url as string,
     });
   }
+  for (const url of batchSourceUrls) {
+    if (!sourceAttachmentByUrl.has(url) && isOwnCloudinaryUrl(url)) {
+      sourceAttachmentByUrl.set(url, describeStoredUrl(url));
+    }
+  }
+
+  // What existing tickets already have, so an unchanged row writes nothing.
+  const existingTaskIds = [...existingByCallNumber.values()];
+  const assigneesByTask = new Map<string, Set<string>>();
+  const checklistByTask = new Map<
+    string,
+    { checklistIds: Set<string>; items: { label: string; isCompleted: boolean }[] }
+  >();
+  const attachmentKeysByTask = new Map<string, Set<string>>();
+  if (existingTaskIds.length > 0) {
+    const [assigneeRows, checklistRows, attachmentRows] = await Promise.all([
+      sql`
+        SELECT task_id, user_id FROM task_assignees
+        WHERE task_id = ANY(${existingTaskIds}::uuid[])
+      `,
+      sql`
+        SELECT tc.task_id, tc.id AS checklist_id, tci.label, tci.is_completed
+        FROM task_checklists tc
+        LEFT JOIN task_checklist_items tci ON tci.task_checklist_id = tc.id
+        WHERE tc.task_id = ANY(${existingTaskIds}::uuid[])
+        ORDER BY tc.task_id, tc.sort_order, tc.id, tci.sort_order
+      `,
+      sql`
+        SELECT ta.task_id, ta.storage_url, tas.source_storage_url
+        FROM task_attachments ta
+        LEFT JOIN task_attachment_sources tas
+          ON tas.task_attachment_id = ta.id
+          AND tas.source_system = ${ATTACHMENT_SOURCE_SYSTEM}
+        WHERE ta.task_id = ANY(${existingTaskIds}::uuid[])
+      `,
+    ]);
+    for (const row of assigneeRows) {
+      const taskId = row.task_id as string;
+      const set = assigneesByTask.get(taskId) ?? new Set<string>();
+      set.add(row.user_id as string);
+      assigneesByTask.set(taskId, set);
+    }
+    for (const row of checklistRows) {
+      const taskId = row.task_id as string;
+      const entry = checklistByTask.get(taskId) ?? {
+        checklistIds: new Set<string>(),
+        items: [],
+      };
+      entry.checklistIds.add(row.checklist_id as string);
+      if (row.label != null) {
+        entry.items.push({
+          label: row.label as string,
+          isCompleted: Boolean(row.is_completed),
+        });
+      }
+      checklistByTask.set(taskId, entry);
+    }
+    for (const row of attachmentRows) {
+      const taskId = row.task_id as string;
+      const set = attachmentKeysByTask.get(taskId) ?? new Set<string>();
+      set.add(row.storage_url as string);
+      if (row.source_storage_url) set.add(row.source_storage_url as string);
+      attachmentKeysByTask.set(taskId, set);
+    }
+  }
+
+  function assigneesChanged(taskId: string, assigneeIds: string[]) {
+    const current = assigneesByTask.get(taskId) ?? new Set<string>();
+    const next = new Set(assigneeIds);
+    return current.size !== next.size || [...next].some((id) => !current.has(id));
+  }
+
+  function checklistChanged(
+    taskId: string,
+    items: { label: string; isCompleted: boolean }[],
+  ) {
+    const current = checklistByTask.get(taskId);
+    if (!current) return items.length > 0;
+    if (items.length === 0) return true;
+    if (current.checklistIds.size !== 1) return true;
+    return (
+      current.items.length !== items.length ||
+      items.some(
+        (item, index) =>
+          current.items[index]!.label !== item.label ||
+          current.items[index]!.isCompleted !== item.isCompleted,
+      )
+    );
+  }
+
+  function newAttachmentsFor(taskId: string, files: UploadedWithSource[]) {
+    const keys = attachmentKeysByTask.get(taskId);
+    if (!keys) return files;
+    return files.filter(
+      (file) => !keys.has(file.source_storage_url) && !keys.has(file.storage_url),
+    );
+  }
+
   function fail(row: ResolvedTaskImportRow, error: string) {
     failures.push({
       rowNumber: row.rowNumber,
@@ -1607,18 +1758,34 @@ export async function importTasksAction(
     row: ResolvedTaskImportRow;
     taskId: string;
     isNew: boolean;
+    /** Something besides the tasks row itself (assignees, files…) is written. */
+    otherChanges: boolean;
+    /** Index within the row's queries of the conditional tasks UPDATE. */
+    taskUpdateOffset: number | null;
     start: number;
     end: number;
   }[] = [];
   let created = 0;
   let updated = 0;
+  let unchanged = 0;
   // Queries per transaction. Each transaction is one round trip; a failing
   // batch is replayed row by row, so a bigger batch only costs on failure.
   const CHUNK = 150;
 
-  function recordSuccess(boundary: (typeof rowBoundaries)[number]) {
-    if (boundary.isNew) created += 1;
-    else updated += 1;
+  function recordSuccess(
+    boundary: (typeof rowBoundaries)[number],
+    results: unknown[],
+  ) {
+    if (boundary.isNew) {
+      created += 1;
+      return;
+    }
+    const taskRowChanged =
+      boundary.taskUpdateOffset != null &&
+      Array.isArray(results[boundary.taskUpdateOffset]) &&
+      (results[boundary.taskUpdateOffset] as unknown[]).length > 0;
+    if (boundary.otherChanges || taskRowChanged) updated += 1;
+    else unchanged += 1;
   }
 
   function recordDbFailure(
@@ -1649,15 +1816,19 @@ export async function importTasksAction(
     const batch = queries.splice(0, queries.length);
     const boundaries = rowBoundaries.splice(0, rowBoundaries.length);
     try {
-      await sql.transaction(batch);
-      boundaries.forEach(recordSuccess);
+      const results = await sql.transaction(batch);
+      for (const boundary of boundaries) {
+        recordSuccess(boundary, results.slice(boundary.start, boundary.end));
+      }
     } catch {
       // The batch rolled back as a whole. Replay each row in its own
       // transaction so only the rows that really fail are left out.
       for (const boundary of boundaries) {
         try {
-          await sql.transaction(batch.slice(boundary.start, boundary.end));
-          recordSuccess(boundary);
+          const results = await sql.transaction(
+            batch.slice(boundary.start, boundary.end),
+          );
+          recordSuccess(boundary, results);
         } catch (error) {
           recordDbFailure(boundary, error);
         }
@@ -1701,8 +1872,31 @@ export async function importTasksAction(
       : null;
 
     const taskId = existingTaskId ?? crypto.randomUUID();
+    let otherChanges = false;
+    let taskUpdateOffset: number | null = null;
+    // An existing ticket only gets the parts that differ from what's stored.
+    const writeAssignees =
+      !existingTaskId || assigneesChanged(taskId, row.assigneeIds);
+    const openingFiles = existingTaskId
+      ? newAttachmentsFor(taskId, uploaded.opening)
+      : uploaded.opening;
+    const resolutionFiles = existingTaskId
+      ? newAttachmentsFor(taskId, uploaded.resolution)
+      : uploaded.resolution;
+    const writeChecklist =
+      row.checklistItems !== null &&
+      (!existingTaskId || checklistChanged(taskId, row.checklistItems));
 
     if (existingTaskId) {
+      otherChanges =
+        writeAssignees ||
+        writeChecklist ||
+        openingFiles.length > 0 ||
+        resolutionFiles.length > 0;
+      const status = row.statusProvided ? row.status : null;
+      taskUpdateOffset = queries.length - rowQueryStart;
+      // RETURNING tells whether anything actually differed; a row equal to
+      // what's stored is left untouched (updated_at included).
       queries.push(sql`
         UPDATE tasks
         SET
@@ -1713,9 +1907,8 @@ export async function importTasksAction(
           floor_id = ${row.floorId},
           area_id = ${row.areaId},
           urgency = ${row.urgency},
-          status = COALESCE(${row.statusProvided ? row.status : null}, status),
+          status = COALESCE(${status}, status),
           description = ${row.description},
-          call_number = ${row.callNumber}::bigint,
           due_at = ${row.dueAt},
           updated_at = now(),
           resolution = ${row.resolution},
@@ -1723,12 +1916,30 @@ export async function importTasksAction(
           resolved_by_user_id = ${row.resolvedByUserId}
         WHERE id = ${taskId}
           AND type = 'task'
+          AND (
+            opened_by_user_id IS DISTINCT FROM ${row.openedByUserId}
+            OR opened_by_name IS DISTINCT FROM ${row.openedByName}
+            OR building_id IS DISTINCT FROM ${row.buildingId}
+            OR task_category_id IS DISTINCT FROM ${categoryId}
+            OR floor_id IS DISTINCT FROM ${row.floorId}
+            OR area_id IS DISTINCT FROM ${row.areaId}
+            OR urgency IS DISTINCT FROM ${row.urgency}
+            OR status IS DISTINCT FROM COALESCE(${status}, status)
+            OR description IS DISTINCT FROM ${row.description}
+            OR due_at IS DISTINCT FROM ${row.dueAt}
+            OR resolution IS DISTINCT FROM ${row.resolution}
+            OR resolved_at IS DISTINCT FROM ${row.resolvedAt}::timestamptz
+            OR resolved_by_user_id IS DISTINCT FROM ${row.resolvedByUserId}
+          )
+        RETURNING id
       `);
 
-      queries.push(sql`
-        DELETE FROM task_assignees
-        WHERE task_id = ${taskId}
-      `);
+      if (writeAssignees) {
+        queries.push(sql`
+          DELETE FROM task_assignees
+          WHERE task_id = ${taskId}
+        `);
+      }
     } else {
       queries.push(sql`
         INSERT INTO tasks (
@@ -1778,24 +1989,19 @@ export async function importTasksAction(
       }
     }
 
-    if (row.assigneeIds.length > 0) {
+    if (writeAssignees && row.assigneeIds.length > 0) {
       queries.push(sql`
         INSERT INTO task_assignees (task_id, user_id)
         SELECT ${taskId}, unnest(${row.assigneeIds}::uuid[])
       `);
     }
 
-    queueAttachmentInserts(queries, taskId, "opening", uploaded.opening);
-    queueAttachmentInserts(
-      queries,
-      taskId,
-      "resolution",
-      uploaded.resolution,
-    );
+    queueAttachmentInserts(queries, taskId, "opening", openingFiles);
+    queueAttachmentInserts(queries, taskId, "resolution", resolutionFiles);
 
     // A missing checklist column means "leave existing data alone". When
     // present (including an empty value), the CSV is authoritative.
-    if (row.checklistItems !== null) {
+    if (row.checklistItems !== null && writeChecklist) {
       queries.push(sql`
         DELETE FROM task_checklists
         WHERE task_id = ${taskId}
@@ -1835,6 +2041,8 @@ export async function importTasksAction(
       row,
       taskId,
       isNew: !existingTaskId,
+      otherChanges,
+      taskUpdateOffset,
       start: rowQueryStart,
       end: queries.length,
     });
@@ -1847,15 +2055,18 @@ export async function importTasksAction(
   revalidatePath("/my-tasks");
 
   const success =
-    updated > 0
-      ? t(dict.superAdmin.uploadSuccessDetailed, { created, updated })
-      : t(dict.superAdmin.uploadSuccess, { count: created });
+    unchanged > 0
+      ? t(dict.superAdmin.uploadSuccessUnchanged, { created, updated, unchanged })
+      : updated > 0
+        ? t(dict.superAdmin.uploadSuccessDetailed, { created, updated })
+        : t(dict.superAdmin.uploadSuccess, { count: created });
 
   failures.sort((a, b) => a.rowNumber - b.rowNumber);
   return {
     success,
     created,
     updated,
+    unchanged,
     failures,
   };
 }

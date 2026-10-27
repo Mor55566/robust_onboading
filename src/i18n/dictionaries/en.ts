@@ -85,6 +85,9 @@ export const en = {
     uploadSuccess: "Imported {count} tasks",
     uploadSuccessDetailed:
       "Imported {created} new tasks, updated {updated}",
+    uploadSuccessUnchanged:
+      "Imported {created} new tasks, updated {updated}, {unchanged} unchanged (not rewritten)",
+    uploadPreviewExisting: "Already in this complex — updated only if something changed",
     uploadRowError: "Row {row}: {message}",
     invalidCallNumber:
       "ticket number \"{callNumber}\" is not valid. Ticket numbers must contain digits only.",

@@ -87,6 +87,9 @@ export const ru: Dictionary = {
     uploadSuccess: "Импортировано заявок: {count}",
     uploadSuccessDetailed:
       "Импортировано новых заявок: {created}, обновлено: {updated}",
+    uploadSuccessUnchanged:
+      "Импортировано новых заявок: {created}, обновлено: {updated}, без изменений: {unchanged}",
+    uploadPreviewExisting: "Уже есть в комплексе — обновится только при изменениях",
     uploadRowError: "Строка {row}: {message}",
     invalidCallNumber:
       "номер заявки \"{callNumber}\" недействителен. Номер заявки должен содержать только цифры.",
