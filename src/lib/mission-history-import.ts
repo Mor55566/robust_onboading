@@ -38,8 +38,9 @@ export const MISSION_HISTORY_IMPORT_HEADERS = [
   "בוצע על ידי",
   "הערה",
   "תאריך יעד מקורי",
+  "תאריך יעד מעודכן",
   "סיבה להשלמה באיחור",
-  'נפתח בשנית ע"י',
+  "נפתח בשנית ע״י",
   "זמן פתיחה מחדש",
   "קריאות",
   "מספר קריאות",
@@ -224,6 +225,17 @@ export function inferChecklistItemFromValue(rawValue: string): {
     };
   }
 
+  // Visitt exports an unticked checklist item as "X".
+  if (value === "X" || value === "x" || value === "✗") {
+    return {
+      itemType: "checklist",
+      answerValue: null,
+      isCompleted: false,
+      numberUnit: null,
+      options: [],
+    };
+  }
+
   const numeric = parseNumericValue(value);
   if (numeric) {
     return {
@@ -333,6 +345,7 @@ function rowToCells(
     row.resolvedByNameRaw,
     row.note,
     row.dueAt ?? "",
+    "",
     "",
     "",
     "",

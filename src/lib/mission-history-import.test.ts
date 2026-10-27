@@ -57,6 +57,29 @@ describe("mission history checklist blob parser", () => {
     assert.equal(items[1]?.answerValue, null);
   });
 
+  it("parses an X mark as an unticked checklist item", () => {
+    const items = parseMissionHistoryChecklistBlob("מיקום\n\tנוקה: X ");
+    assert.equal(items[0]?.itemType, "checklist");
+    assert.equal(items[0]?.isCompleted, false);
+    assert.equal(items[0]?.answerValue, null);
+  });
+
+  it("keeps a label split by a newline inside one tabbed item", () => {
+    const blob =
+      "מינוס 1 < מינוס 1 / חניון \n\tהנע גנרטור: V \n\tפאזה R\n מתח בין פאזות: 400 \n\tמתח בין פאזות ואפס\nפאזה R: 231 \n\tוודא תדר 50Hz: 50";
+    const items = parseMissionHistoryChecklistBlob(blob);
+    assert.deepEqual(
+      items.map((item) => [item.label, item.answerValue]),
+      [
+        ["הנע גנרטור", null],
+        ["פאזה R\nמתח בין פאזות", "400"],
+        ["מתח בין פאזות ואפס\nפאזה R", "231"],
+        ["וודא תדר 50Hz", "50"],
+      ],
+    );
+    assert.ok(items.every((item) => item.location === "מינוס 1 < מינוס 1 / חניון"));
+  });
+
   it("extracts a unit suffix from a numeric value", () => {
     const blob = "מיקום\n\tארגז ג'ל: 15יח";
     const items = parseMissionHistoryChecklistBlob(blob);
@@ -73,6 +96,7 @@ describe("inferChecklistItemFromValue", () => {
     ["כן", "options"],
     ["-", "text"],
     ["V", "checklist"],
+    ["X", "checklist"],
     ["40", "number"],
     ["26.4", "number"],
     ["טקסט חופשי כלשהו", "text"],
@@ -104,6 +128,71 @@ describe("parseMissionHistoryImportContent", () => {
     assert.equal(parsed.rows[0]?.externalId, "abc123");
     assert.equal(parsed.rows[0]?.status, "closed");
     assert.equal(parsed.rows[0]?.checklistItems[0]?.answerValue, "28");
+  });
+
+  it("parses the current Visitt export (BOM, updated due date column, multi-location checks)", () => {
+    const header =
+      '\uFEFF"#","מזהה","קישור","משימה","נכס","אזור","סטאטוס","תדירות","בניינים","כתובות בניין","אתרים","משתמש משויך","קטגוריה","נסגר ב","בוצע על ידי","הערה","תאריך יעד מקורי","תאריך יעד מעודכן","סיבה להשלמה באיחור","נפתח בשנית ע״י","זמן פתיחה מחדש","קריאות","מספר קריאות","שעות עבודה","שעות עבודה משוערות","תמונות","בדיקות","עורכים"';
+    const checks = [
+      "מינוס 1 < מינוס 1 / חניון ",
+      "\tלנטרל מערכת גלוי אש: V ",
+      "\tלחץ מים בזמן הבדיקה: 256 ",
+      "\tמתח חשמל פזאה R: 398 ",
+      "\tוודא שאין נזלות מים: X ",
+      "מינוס 1 < מינוס 1 / חניון ",
+      "\tלנטרל מערכת גלוי אש: V ",
+      "בניין A / קומה 37 < קומה 37 / מתקן ניקוי ",
+      "\tהאם האינטרקום עובד?: כן ",
+      "\tהערות: -",
+    ].join("\n");
+    const row = `1,"6590930c7aecfe1d2ae7194b","https://app.visitt.io/visit/6590930c7aecfe1d2ae7194b","בדיקה של משאבת מתזים חשמלית","TOU Towers","יחידה צפון","בוצע","שבועית","שטח משותף","","מינוס 1 < מינוס 1 / חניון","סמיון  קיפניס","אחזקה מונעת","03-01-2024 06:50:56","סמיון  קיפניס","","06-01-2024 23:59:59","","","","","","0","","","","${checks}",""`;
+    const parsed = parseMissionHistoryImportContent(`${header}\n${row}`, "1.csv");
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+    const mission = parsed.rows[0]!;
+    assert.equal(mission.externalId, "6590930c7aecfe1d2ae7194b");
+    assert.equal(mission.status, "closed");
+    assert.equal(mission.categoryRaw, "אחזקה מונעת");
+    assert.equal(mission.resolvedByNameRaw, "סמיון  קיפניס");
+    assert.equal(mission.closedAt, "2024-01-03T06:50:56+03:00");
+    assert.equal(mission.dueAt, "2024-01-06T23:59:59+03:00");
+    assert.deepEqual(
+      mission.checklistItems.map((item) => [
+        item.location,
+        item.sortOrder,
+        item.label,
+        item.itemType,
+        item.answerValue,
+        item.isCompleted,
+      ]),
+      [
+        ["מינוס 1 < מינוס 1 / חניון", 0, "לנטרל מערכת גלוי אש", "checklist", null, true],
+        ["מינוס 1 < מינוס 1 / חניון", 1, "לחץ מים בזמן הבדיקה", "number", "256", false],
+        ["מינוס 1 < מינוס 1 / חניון", 2, "מתח חשמל פזאה R", "number", "398", false],
+        ["מינוס 1 < מינוס 1 / חניון", 3, "וודא שאין נזלות מים", "checklist", null, false],
+        ["מינוס 1 < מינוס 1 / חניון", 4, "לנטרל מערכת גלוי אש", "checklist", null, true],
+        ["בניין A / קומה 37 < קומה 37 / מתקן ניקוי", 5, "האם האינטרקום עובד?", "options", "כן", false],
+        ["בניין A / קומה 37 < קומה 37 / מתקן ניקוי", 6, "הערות", "text", null, false],
+      ],
+    );
+
+    const [resolved] = classifyMissionHistoryImportRows({
+      rows: [mission],
+      existingMissionsByExternalId: new Map(),
+      existingExternalIdsAllTypes: new Set(),
+      templatesByNormalizedTitle: new Map(),
+      buildings: [],
+      floorsByBuilding: new Map(),
+      areasByBuilding: new Map(),
+      usersByNormalizedName: new Map(),
+    });
+    // Repeated location blocks for the same place merge into one checklist.
+    assert.deepEqual(
+      resolved?.checklistGroups.map((group) => [group.title, group.items.length]),
+      [
+        ["מינוס 1 < מינוס 1 / חניון", 5],
+        ["בניין A / קומה 37 < קומה 37 / מתקן ניקוי", 2],
+      ],
+    );
   });
 
   it("flags missing required columns", () => {
