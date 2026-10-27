@@ -439,7 +439,9 @@ export type MissionHistoryClassification = "create" | "update" | "skip";
 
 export type ResolvedMissionHistoryImportRow = MissionHistoryImportRow & {
   classification: MissionHistoryClassification;
-  skipReason?: "unmatchedTitle" | "externalIdConflict";
+  skipReason?: "noBuilding" | "externalIdConflict";
+  /** True when no scheduled mission matched and the row is imported standalone. */
+  unmatchedTemplate: boolean;
   templateTaskId: string | null;
   existingMissionId: string | null;
   buildingId: string | null;
@@ -505,6 +507,28 @@ function resolveChecklistLocation(
   return null;
 }
 
+/**
+ * Where to place a history row that has no scheduled mission: its "בניינים"
+ * building, else its first resolvable check location, else the complex's only
+ * building.
+ */
+function resolveStandaloneLocation(
+  row: MissionHistoryImportRow,
+  checklistGroups: ResolvedMissionHistoryImportRow["checklistGroups"],
+  buildings: TaskImportBuilding[],
+): { buildingId: string; floorId: string | null; areaId: string | null } | null {
+  for (const name of row.buildingsRaw) {
+    const building = resolveBuildingByName(name, buildings);
+    if (building) return { buildingId: building.id, floorId: null, areaId: null };
+  }
+  const fromChecks = checklistGroups.find((group) => group.locations.length > 0)?.locations[0];
+  if (fromChecks) return fromChecks;
+  if (buildings.length === 1) {
+    return { buildingId: buildings[0]!.id, floorId: null, areaId: null };
+  }
+  return null;
+}
+
 export function classifyMissionHistoryImportRows(options: {
   rows: MissionHistoryImportRow[];
   existingMissionsByExternalId: Map<string, string>;
@@ -514,26 +538,11 @@ export function classifyMissionHistoryImportRows(options: {
   floorsByBuilding: Map<string, AreaImportFloor[]>;
   areasByBuilding: Map<string, EquipmentLocationArea[]>;
   usersByNormalizedName: Map<string, string>;
+  categoriesByNormalizedName?: Map<string, string>;
 }): ResolvedMissionHistoryImportRow[] {
   return options.rows.map((row) => {
     const existingMissionId = options.existingMissionsByExternalId.get(row.externalId) ?? null;
     const template = options.templatesByNormalizedTitle.get(normalizeLookup(row.title)) ?? null;
-
-    let classification: MissionHistoryClassification;
-    let skipReason: ResolvedMissionHistoryImportRow["skipReason"];
-    if (existingMissionId) {
-      classification = "update";
-    } else if (options.existingExternalIdsAllTypes.has(row.externalId)) {
-      // Colliding with a non-mission row (e.g. a template or plain task) —
-      // the global unique index on tasks.external_id would reject an insert.
-      classification = "skip";
-      skipReason = "externalIdConflict";
-    } else if (template) {
-      classification = "create";
-    } else {
-      classification = "skip";
-      skipReason = "unmatchedTitle";
-    }
 
     const resolvedByUserId = row.resolvedByNameRaw
       ? (options.usersByNormalizedName.get(normalizeLookup(row.resolvedByNameRaw)) ?? null)
@@ -560,16 +569,46 @@ export function classifyMissionHistoryImportRows(options: {
       };
     });
 
+    // History is kept even when its scheduled mission was deleted or renamed:
+    // the row is imported standalone, placed by its own building / check
+    // locations so it still shows under the complex.
+    const fallbackLocation = template
+      ? null
+      : resolveStandaloneLocation(row, checklistGroups, options.buildings);
+
+    let classification: MissionHistoryClassification;
+    let skipReason: ResolvedMissionHistoryImportRow["skipReason"];
+    if (existingMissionId) {
+      classification = "update";
+    } else if (options.existingExternalIdsAllTypes.has(row.externalId)) {
+      // Colliding with a non-mission row (e.g. a template or plain task) —
+      // the global unique index on tasks.external_id would reject an insert.
+      classification = "skip";
+      skipReason = "externalIdConflict";
+    } else if (template || fallbackLocation) {
+      classification = "create";
+    } else {
+      classification = "skip";
+      skipReason = "noBuilding";
+    }
+
+    const categoryId =
+      template?.taskCategoryId ??
+      (row.categoryRaw
+        ? (options.categoriesByNormalizedName?.get(normalizeLookup(row.categoryRaw)) ?? null)
+        : null);
+
     return {
       ...row,
       classification,
       skipReason,
+      unmatchedTemplate: !template,
       templateTaskId: template?.id ?? null,
       existingMissionId,
-      buildingId: template?.buildingId ?? null,
-      floorId: template?.floorId ?? null,
-      areaId: template?.areaId ?? null,
-      categoryId: template?.taskCategoryId ?? null,
+      buildingId: template?.buildingId ?? fallbackLocation?.buildingId ?? null,
+      floorId: template ? template.floorId : (fallbackLocation?.floorId ?? null),
+      areaId: template ? template.areaId : (fallbackLocation?.areaId ?? null),
+      categoryId,
       resolvedByUserId,
       checklistGroups,
     };

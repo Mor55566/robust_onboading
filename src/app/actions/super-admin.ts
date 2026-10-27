@@ -2778,13 +2778,22 @@ type MissionHistoryReferenceData = {
   existingMissionsByExternalId: Map<string, string>;
   existingExternalIdsAllTypes: Set<string>;
   templatesByNormalizedTitle: Map<string, MissionHistoryTemplateMatch>;
+  categoriesByNormalizedName: Map<string, string>;
 };
 
 async function loadMissionHistoryReferenceData(
   complexId: string,
 ): Promise<MissionHistoryReferenceData> {
-  const [buildings, floors, areas, users, existingMissions, existingExternalIds, templates] =
-    await Promise.all([
+  const [
+    buildings,
+    floors,
+    areas,
+    users,
+    existingMissions,
+    existingExternalIds,
+    templates,
+    categories,
+  ] = await Promise.all([
       sql`SELECT id, name FROM buildings WHERE complex_id = ${complexId} ORDER BY name ASC`,
       sql`
         SELECT id, name, number, building_id FROM floors
@@ -2817,6 +2826,7 @@ async function loadMissionHistoryReferenceData(
         WHERE type = 'template-mission'
           AND building_id IN (SELECT id FROM buildings WHERE complex_id = ${complexId})
       `,
+      sql`SELECT id, name FROM task_categories WHERE complex_id = ${complexId}`,
     ]);
 
   const floorsByBuilding = new Map<string, AreaImportFloor[]>();
@@ -2863,6 +2873,14 @@ async function loadMissionHistoryReferenceData(
     });
   }
 
+  const categoriesByNormalizedName = new Map<string, string>();
+  for (const row of categories) {
+    const key = normalizeLookup(row.name as string);
+    if (key && !categoriesByNormalizedName.has(key)) {
+      categoriesByNormalizedName.set(key, row.id as string);
+    }
+  }
+
   return {
     buildings: buildings.map((row) => ({
       id: row.id as string,
@@ -2881,6 +2899,7 @@ async function loadMissionHistoryReferenceData(
       existingExternalIds.map((row) => row.external_id as string),
     ),
     templatesByNormalizedTitle,
+    categoriesByNormalizedName,
   };
 }
 

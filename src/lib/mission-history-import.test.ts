@@ -252,19 +252,66 @@ describe("classifyMissionHistoryImportRows", () => {
     assert.equal(result[0]?.templateTaskId, "template-1");
   });
 
-  it("skips with unmatchedTitle when no template title matches", () => {
+  it("imports an unmatched title standalone, placed by its building and category name", () => {
+    const result = classifyMissionHistoryImportRows({
+      rows: [
+        {
+          ...baseRow,
+          title: "בדיקה ושאיבת מים בפירים בניין B",
+          buildingsRaw: ["בניין B"],
+          categoryRaw: "אחזקה מונעת",
+        },
+      ],
+      existingMissionsByExternalId: new Map(),
+      existingExternalIdsAllTypes: new Set(),
+      templatesByNormalizedTitle: new Map(),
+      buildings: [
+        { id: "building-a", name: "A" },
+        { id: "building-b", name: "B" },
+      ],
+      floorsByBuilding: new Map(),
+      areasByBuilding: new Map(),
+      usersByNormalizedName: new Map(),
+      categoriesByNormalizedName: new Map([["אחזקה מונעת", "category-1"]]),
+    });
+    assert.equal(result[0]?.classification, "create");
+    assert.equal(result[0]?.unmatchedTemplate, true);
+    assert.equal(result[0]?.templateTaskId, null);
+    assert.equal(result[0]?.buildingId, "building-b");
+    assert.equal(result[0]?.categoryId, "category-1");
+  });
+
+  it("falls back to the complex's only building for an unmatched title", () => {
     const result = classifyMissionHistoryImportRows({
       rows: [baseRow],
       existingMissionsByExternalId: new Map(),
       existingExternalIdsAllTypes: new Set(),
       templatesByNormalizedTitle: new Map(),
-      buildings: [],
+      buildings: [{ id: "building-a", name: "A" }],
+      floorsByBuilding: new Map(),
+      areasByBuilding: new Map(),
+      usersByNormalizedName: new Map(),
+    });
+    assert.equal(result[0]?.classification, "create");
+    assert.equal(result[0]?.buildingId, "building-a");
+  });
+
+  it("skips with noBuilding when an unmatched title can't be placed in a building", () => {
+    const result = classifyMissionHistoryImportRows({
+      rows: [baseRow],
+      existingMissionsByExternalId: new Map(),
+      existingExternalIdsAllTypes: new Set(),
+      templatesByNormalizedTitle: new Map(),
+      buildings: [
+        { id: "building-a", name: "A" },
+        { id: "building-b", name: "B" },
+      ],
       floorsByBuilding: new Map(),
       areasByBuilding: new Map(),
       usersByNormalizedName: new Map(),
     });
     assert.equal(result[0]?.classification, "skip");
-    assert.equal(result[0]?.skipReason, "unmatchedTitle");
+    assert.equal(result[0]?.skipReason, "noBuilding");
   });
 
   it("skips with externalIdConflict when the id belongs to a non-mission row", () => {

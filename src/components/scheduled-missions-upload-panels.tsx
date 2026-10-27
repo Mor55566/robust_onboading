@@ -104,13 +104,20 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     const issues = checkMissionHistoryRows(rows);
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
     // Checklist items are most of the payload (a year's export is ~15MB) and the
-    // preview only needs their count, so they stay on the client.
+    // preview only needs their count — plus one item per location, which the
+    // server uses to place rows that have no scheduled mission.
     const checksByExternalId = new Map(
       rows.map((row) => [row.externalId, row.checklistItems.length]),
     );
     const result = await previewMissionHistoryImportAction(
       complexId,
-      rows.map((row) => ({ ...row, checklistItems: [] })),
+      rows.map((row) => ({
+        ...row,
+        checklistItems: row.checklistItems.filter(
+          (item, index, items) =>
+            items.findIndex((other) => other.location === item.location) === index,
+        ),
+      })),
     );
     if ("error" in result) return result;
     return result.rows.map((row) => {
@@ -121,7 +128,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
             ? t(dict.superAdmin.missionHistoryExternalIdConflict, {
                 id: row.externalId,
               })
-            : t(dict.superAdmin.missionHistoryUnmatchedTitle, {
+            : t(dict.superAdmin.missionHistoryNoBuilding, {
                 title: row.title,
               })
           : [
@@ -131,10 +138,15 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
               checkCount > 0
                 ? `${checkCount} ${dict.superAdmin.missionHistoryChecksLabel}`
                 : null,
+              row.classification === "create" && row.unmatchedTemplate
+                ? t(dict.superAdmin.missionHistoryUnmatchedTitle, {
+                    title: row.title,
+                  })
+                : null,
             ]
               .filter(Boolean)
               .join(" · ");
-      return {
+    return {
         key: `mission-history-${row.externalId}`,
         label: row.title.slice(0, 80) || `Row ${row.rowNumber}`,
         detail: detail || undefined,

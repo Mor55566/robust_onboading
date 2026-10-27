@@ -226,7 +226,7 @@ export const en = {
     missionHistoryUploadButton: "Upload mission history",
     missionHistoryUploadTitle: "Upload mission history",
     missionHistoryUploadSubtitle:
-      "Download the template, fill in completed mission visits, then upload. מזהה is saved as external id — re-uploading the same file updates the existing record instead of duplicating it. Each row is matched to an existing scheduled mission by its title (משימה); rows with no matching title are skipped and flagged below for review.",
+      "Download the template, fill in completed mission visits, then upload. מזהה is saved as external id — re-uploading the same file updates the existing record instead of duplicating it. Each row is matched to an existing scheduled mission by its title (משימה); rows with no matching title (e.g. a deleted mission) are still imported into history, placed by the row's building and check locations.",
     missionHistoryUploadEmpty: "The file has no mission history rows.",
     missionHistoryUploadInvalid:
       "Could not read this file. Use the CSV or Excel template.",
@@ -236,7 +236,9 @@ export const en = {
     missionHistoryUploadSuccess:
       "Imported {created} new, updated {updated}, skipped {skipped}",
     missionHistoryUnmatchedTitle:
-      "No scheduled mission found with the title “{title}” — not imported",
+      "No scheduled mission found with the title “{title}” — imported into history without a mission link",
+    missionHistoryNoBuilding:
+      "No scheduled mission found with the title “{title}” and no matching building — not imported",
     missionHistoryExternalIdConflict:
       "מזהה {id} is already used by another record — not imported",
     missionHistoryStatusDone: "Done",
