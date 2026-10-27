@@ -7,6 +7,7 @@ import {
   getDeletableTicketsAction,
   importAutomationsAction,
   importTasksAction,
+  previewTaskImportAction,
   type DeletableTicket,
 } from "@/app/actions/super-admin";
 import { CategoriesUploadPanels } from "@/components/categories-upload-panels";
@@ -51,19 +52,31 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
     text: string;
   } | null>(null);
 
-  function previewRows(rows: TaskImportRow[]): ImportPreviewRow[] {
+  async function previewRows(
+    rows: TaskImportRow[],
+  ): Promise<ImportPreviewRow[] | { error: string }> {
+    const result = await previewTaskImportAction(
+      complexId,
+      rows.map((row) => row.callNumber),
+    );
+    if (result.error || !result.existing) {
+      return { error: result.error ?? dict.admin.uploadImportFailed };
+    }
+    const existing = new Set(result.existing);
     return rows.map((row) => {
+      const isExisting = existing.has(row.callNumber.trim());
       const bits = [
         row.callNumber ? `#${row.callNumber}` : null,
         row.building || null,
         row.status,
         row.urgency,
+        isExisting ? dict.superAdmin.uploadPreviewExisting : null,
       ].filter(Boolean);
       return {
         key: `task-${row.rowNumber}`,
         label: row.description.slice(0, 80) || `Row ${row.rowNumber}`,
         detail: bits.join(" · ") || undefined,
-        action: "create" as const,
+        action: isExisting ? ("update" as const) : ("create" as const),
       };
     });
   }
@@ -84,6 +97,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
     const CONCURRENCY = 3;
     let created = 0;
     let updated = 0;
+    let unchanged = 0;
     let doneRows = 0;
     const failures: ImportFailure[] = [];
     const failureLabel = (callNumber: string | null | undefined) =>
@@ -119,6 +133,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         const result = await importTasksAction(complexId, batch);
         created += result.created ?? 0;
         updated += result.updated ?? 0;
+        unchanged += result.unchanged ?? 0;
         for (const failure of result.failures ?? []) {
           failures.push({
             rowNumber: failure.rowNumber,
@@ -166,13 +181,15 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
 
     if (failures.length > 0) {
       failures.sort((a, b) => a.rowNumber - b.rowNumber);
-      return { failures, succeeded: created + updated };
+      return { failures, succeeded: created + updated + unchanged };
     }
 
     const success =
-      updated > 0
-        ? t(dict.superAdmin.uploadSuccessDetailed, { created, updated })
-        : t(dict.superAdmin.uploadSuccess, { count: created });
+      unchanged > 0
+        ? t(dict.superAdmin.uploadSuccessUnchanged, { created, updated, unchanged })
+        : updated > 0
+          ? t(dict.superAdmin.uploadSuccessDetailed, { created, updated })
+          : t(dict.superAdmin.uploadSuccess, { count: created });
     setMessage({
       type: "success",
       text: success,
@@ -287,7 +304,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
           }
           return parsed;
         }}
-        preview={previewRows}
+        previewAsync={previewRows}
         onClose={() => setUploadOpen(false)}
         onImport={handleImport}
       />
