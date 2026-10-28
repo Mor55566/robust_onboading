@@ -27,6 +27,11 @@ export type FileImportRow = {
   complex: string;
   tag: string;
   resident: string;
+  /**
+   * The current version's end date with its century worked out from
+   * "תוקף" (see resolveExpirationDate). Null when the row has no end date.
+   */
+  expirationDate?: string | null;
 };
 
 export type ImportComplex = { id: string; name: string };
@@ -283,6 +288,20 @@ export function parseFilesImportContent(
     "דייר",
     "שייך מסמך ל",
   ]);
+  const startDateIndex = findHeaderIndex(header, [
+    "start date",
+    "start_date",
+    "תאריך התחלה",
+  ]);
+  const expirationDateIndex = findHeaderIndex(header, [
+    "expiration date",
+    "expiration_date",
+    "תאריך תפוגה",
+    "תאריך סיום",
+    "end date",
+    "end_date",
+  ]);
+  const validityIndex = findHeaderIndex(header, ["תוקף", "validity", "duration"]);
 
   // The "נכס" column is optional: rows always go to the complex selected in
   // the header, and the column only serves as a cross-check against it.
@@ -312,6 +331,19 @@ export function parseFilesImportContent(
     }
     seenExternalIds.add(externalId);
 
+    const expirationDate =
+      expirationDateIndex >= 0
+        ? resolveExpirationDate(
+            cells[expirationDateIndex] ?? "",
+            startDateIndex >= 0
+              ? parseExportDateOnly(cells[startDateIndex] ?? "")
+              : null,
+            validityIndex >= 0
+              ? parseValidityMonths(cells[validityIndex] ?? "")
+              : null,
+          )
+        : null;
+
     rows.push({
       rowNumber,
       externalId,
@@ -319,6 +351,7 @@ export function parseFilesImportContent(
       complex,
       tag,
       resident,
+      expirationDate,
     });
   }
 
@@ -406,6 +439,7 @@ export type ResolvedFileImportRow = {
   title: string;
   tagIds: string[];
   residentId: string | null;
+  expirationDate: string | null;
 };
 
 // One cell can name several tags: "כיבוי אש, גנרטורים" → two tags.
@@ -556,6 +590,7 @@ export function resolveFileImportRows(options: {
       title: row.title,
       tagIds,
       residentId: resolvedResident.id,
+      expirationDate: row.expirationDate ?? null,
     });
   }
 
@@ -694,6 +729,63 @@ function parseExportDateOnly(value: string): string | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${year}-${pad(month)}-${pad(day)}`;
+}
+
+const VALIDITY_WORDS: Record<string, number> = {
+  חודש: 1,
+  חודשיים: 2,
+  "חצי שנה": 6,
+  שנה: 12,
+  שנתיים: 24,
+};
+
+/** "שנה" → 12, "14 חודשים" → 14, "5 שנים" → 60; null when unrecognised. */
+export function parseValidityMonths(value: string): number | null {
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  if (!trimmed) return null;
+  if (trimmed in VALIDITY_WORDS) return VALIDITY_WORDS[trimmed]!;
+  const months = trimmed.match(/^(\d+) ?(?:חודשים|חודש)$/);
+  if (months) return Number(months[1]);
+  const years = trimmed.match(/^(\d+) ?(?:שנים|שנה)$/);
+  if (years) return Number(years[1]) * 12;
+  return null;
+}
+
+/**
+ * Parses an end date, working out the century of a two-digit year ("29/9/22")
+ * from the start date plus the validity period: of 19xx…29xx, the year closest
+ * to start + months wins (22/9/24 + 2376 months → 2222). The day and month
+ * always come from the end date itself; without a start date or validity the
+ * year falls back to 20xx.
+ */
+export function resolveExpirationDate(
+  value: string,
+  startDate: string | null,
+  validityMonths: number | null,
+): string | null {
+  const parsed = parseExportDateOnly(value);
+  if (!parsed || !startDate || validityMonths === null) return parsed;
+  if (!/^\d{1,2}\/\d{1,2}\/\d{2}(?:\s+.*)?$/.test(value.trim())) return parsed;
+
+  const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+  const expected = Date.UTC(
+    startYear!,
+    startMonth! - 1 + validityMonths,
+    startDay!,
+  );
+  const [, month, day] = parsed.split("-").map(Number);
+  const yearInCentury = Number(parsed.slice(0, 4)) % 100;
+  let bestYear = Number(parsed.slice(0, 4));
+  let bestDistance = Infinity;
+  for (let century = 19; century <= 29; century += 1) {
+    const year = century * 100 + yearInCentury;
+    const distance = Math.abs(Date.UTC(year, month! - 1, day!) - expected);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestYear = year;
+    }
+  }
+  return `${bestYear}${parsed.slice(4)}`;
 }
 
 function parseExportDateTime(value: string): string | null {

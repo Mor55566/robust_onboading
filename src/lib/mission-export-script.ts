@@ -3,6 +3,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
  * Run from DevTools Console while the assignments table is visible.
  *
  * Opens only assignment links in column 2. It never clicks the row checkbox.
+ * Also records whether each assignment is paused (never clicks "הפעל").
  */
 (async () => {
   'use strict';
@@ -12,6 +13,9 @@ export const MISSION_EXPORT_SCRIPT = `/*
     MODAL_SELECTOR: '.Page.Page__is-modal',
     CLOSE_SELECTOR: '[data-test-id="modal-close"]',
     ITEM_SELECTOR: '.AssignmentItem',
+    PAUSED_BANNER_SELECTOR: '.HintBanner',
+    PAUSED_TEXT: 'משימה זו מושהית',
+    PAUSED_ICON_SELECTOR: 'use[href="#Pause_Filled_20x20"]',
     OPEN_TIMEOUT_MS: 5000,
     CLOSE_CLICK_TIMEOUT_MS: 700,
     CLOSE_NAVIGATION_TIMEOUT_MS: 4000,
@@ -264,10 +268,36 @@ export const MISSION_EXPORT_SCRIPT = `/*
     return '';
   }
 
-  function extractLocations(root) {
-    const headings = [...root.querySelectorAll('.title-small')];
+  // A paused assignment shows a HintBanner with the pause icon and the text
+  // "משימה זו מושהית" (next to a "הפעל" button, which is never touched here).
+  function extractPausedState(modal) {
+    return [...modal.querySelectorAll(CONFIG.PAUSED_BANNER_SELECTOR)].some(
+      (banner) =>
+        clean(banner.querySelector('.hint-text')?.textContent) ===
+          CONFIG.PAUSED_TEXT ||
+        Boolean(banner.querySelector(CONFIG.PAUSED_ICON_SELECTOR))
+    );
+  }
 
-    const heading = headings.find(
+  // Visitt section headings ("מיקומים", "בדיקות") used to carry .title-small;
+  // newer markup uses Tailwind classes (text-sm font-semibold), so match by text.
+  const SECTION_HEADING_TEXTS = ['מיקומים', 'בדיקות'];
+
+  function isSectionHeading(element) {
+    return (
+      element.matches('.title-small, .font-semibold') &&
+      SECTION_HEADING_TEXTS.includes(clean(element.textContent))
+    );
+  }
+
+  function sectionHeadings(root) {
+    return [...root.querySelectorAll('.title-small, .font-semibold')].filter(
+      isSectionHeading
+    );
+  }
+
+  function extractLocations(root) {
+    const heading = sectionHeadings(root).find(
       (element) => clean(element.textContent) === 'מיקומים'
     );
 
@@ -276,7 +306,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
     const locations = [];
     let sibling = heading.nextElementSibling;
 
-    while (sibling && !sibling.matches('.title-small')) {
+    while (sibling && !isSectionHeading(sibling)) {
       const locationElements = sibling.children.length
         ? [...sibling.children]
         : [sibling];
@@ -420,13 +450,14 @@ export const MISSION_EXPORT_SCRIPT = `/*
       category: labelledValue(modal, 'קטגוריה:'),
       frequency: labelledValue(modal, 'תדירות:'),
       skip_on_holidays: labelledValue(modal, 'התנהגות בחגים:') === 'מדולגת בחגים',
+      is_paused: extractPausedState(modal),
       assigned_users: labelledValue(modal, 'משתמש משויך:'),
     };
 
     // Every Visitt card containing its own "מיקומים" and "בדיקות" headings is
     // a separate checklist. Read locations and items inside that card only.
     const sections = [...modal.querySelectorAll('.body-bg')].filter((section) => {
-      const headings = [...section.querySelectorAll('.title-small')].map(
+      const headings = sectionHeadings(section).map(
         (heading) => clean(heading.textContent)
       );
       return (
@@ -508,6 +539,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
       'category',
       'frequency',
       'skip_on_holidays',
+      'is_paused',
       'assigned_users',
       'location',
       'checklist_title',
@@ -523,11 +555,13 @@ export const MISSION_EXPORT_SCRIPT = `/*
       'options',
     ];
 
+    const booleanColumns = new Set(['skip_on_holidays', 'is_paused']);
+
     const csv = [
       columns.map(csvCell).join(','),
       ...rows.map((row) =>
         columns.map((column) => csvCell(
-          column === 'skip_on_holidays'
+          booleanColumns.has(column)
             ? (row[column] ? 'yes' : 'no')
             : row[column]
         )).join(',')
@@ -723,7 +757,8 @@ export const MISSION_EXPORT_SCRIPT = `/*
 
     if (closeConfirmed) {
       console.info(
-        \`נוספו \${exportedAssignments.length} מתוך \${assignmentHrefs.length} טיקטים.\`
+        \`נוספו \${exportedAssignments.length} מתוך \${assignmentHrefs.length} טיקטים.\` +
+          (extracted.common.is_paused ? ' (מושהית)' : '')
       );
     }
 

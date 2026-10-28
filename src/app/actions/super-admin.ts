@@ -2582,6 +2582,11 @@ export async function importScheduledMissionsAction(
             interval_count = ${intervalCount},
             interval_unit = ${intervalUnit},
             skip_holidays = ${row.skipHolidays},
+            paused_at = CASE
+              WHEN ${row.isPaused}::boolean IS NULL THEN paused_at
+              WHEN ${row.isPaused}::boolean THEN COALESCE(paused_at, now())
+              ELSE NULL
+            END,
             updated_at = now()
           WHERE template_mission_id = ${missionId}
         `);
@@ -2636,7 +2641,8 @@ export async function importScheduledMissionsAction(
             weekday,
             interval_count,
             interval_unit,
-            skip_holidays
+            skip_holidays,
+            paused_at
           )
           VALUES (
             ${missionId},
@@ -2645,7 +2651,8 @@ export async function importScheduledMissionsAction(
             ${weekday},
             ${intervalCount},
             ${intervalUnit},
-            ${row.skipHolidays}
+            ${row.skipHolidays},
+            CASE WHEN ${row.isPaused}::boolean THEN now() ELSE NULL END
           )
         `);
 
@@ -3146,7 +3153,7 @@ export async function importMissionHistoryAction(
             description = ${description},
             status = ${row.status},
             resolution = ${row.note || null},
-            resolved_at = ${row.status === "closed" ? row.closedAt : null}::timestamptz,
+            resolved_at = ${row.status === "closed" ? (row.closedAt ?? row.dueAt) : null}::timestamptz,
             resolved_by_user_id = ${row.status === "closed" ? row.resolvedByUserId : null},
             due_at = ${row.dueAt}::timestamptz,
             updated_at = now()
@@ -3165,7 +3172,7 @@ export async function importMissionHistoryAction(
             ${missionId}, ${row.externalId}, ${user.id}, ${row.buildingId}, ${row.categoryId},
             ${row.floorId}, ${row.areaId}, 'mission', ${row.templateTaskId}, ${row.title}, ${description},
             ${row.status}, ${row.note || null},
-            ${row.status === "closed" ? row.closedAt : null}::timestamptz,
+            ${row.status === "closed" ? (row.closedAt ?? row.dueAt) : null}::timestamptz,
             ${row.status === "closed" ? row.resolvedByUserId : null},
             ${row.dueAt}::timestamptz,
             COALESCE(${row.closedAt}::timestamptz, now()),
@@ -3617,6 +3624,24 @@ export async function importFilesAction(
         `,
   );
 
+  // The documents file knows "תוקף", the attachments file doesn't — so an end
+  // date like "29/9/22" that step 3 stored as 2022 gets its century fixed here
+  // (2222). Only the century changes; day, month and year-in-century must match.
+  for (const item of resolved.items) {
+    if (item.action !== "update" || !item.expirationDate) continue;
+    queries.push(sql`
+      UPDATE files f
+      SET expiration_date = ${item.expirationDate}::date, updated_at = now()
+      WHERE f.series_id = ${item.id}
+        AND f.version = (SELECT max(version) FROM files WHERE series_id = ${item.id})
+        AND f.expiration_date IS NOT NULL
+        AND f.expiration_date <> ${item.expirationDate}::date
+        AND to_char(f.expiration_date, 'MM-DD') = to_char(${item.expirationDate}::date, 'MM-DD')
+        AND extract(year FROM f.expiration_date)::int % 100
+          = extract(year FROM ${item.expirationDate}::date)::int % 100
+    `);
+  }
+
   try {
     await sql.transaction(queries);
   } catch (error) {
@@ -3982,7 +4007,17 @@ export async function importFileAttachmentsAction(
           UPDATE files
           SET
             start_date = ${item.startDate},
-            expiration_date = ${item.expirationDate},
+            -- Keep a century the documents upload already fixed (2222, not
+            -- the 2022 a two-digit "29/9/22" parses to).
+            expiration_date = CASE
+              WHEN expiration_date IS NOT NULL
+                AND ${item.expirationDate}::date IS NOT NULL
+                AND to_char(expiration_date, 'MM-DD') = to_char(${item.expirationDate}::date, 'MM-DD')
+                AND extract(year FROM expiration_date)::int % 100
+                  = extract(year FROM ${item.expirationDate}::date)::int % 100
+              THEN expiration_date
+              ELSE ${item.expirationDate}::date
+            END,
             created_by_user_id = COALESCE(
               ${item.createdByUserId}::uuid,
               created_by_user_id

@@ -32,6 +32,7 @@ export const MISSION_IMPORT_HEADERS = [
   "שם",
   "תדירות",
   "skip_on_holidays",
+  "is_paused",
   "בניינים",
   "כתובות בניין",
   "קטגוריה",
@@ -56,6 +57,8 @@ export type MissionImportRow = {
   title: string;
   frequency: string;
   skipHolidays: boolean;
+  /** null when the file has no paused column (keep the current state). */
+  isPaused: boolean | null;
   buildings: string[];
   category: string;
   assignees: string[];
@@ -185,6 +188,7 @@ const SAMPLE_ROWS: Omit<MissionImportRow, "rowNumber">[] = [
     title: "בדיקה של משאבת מתזים חשמלית",
     frequency: "שבועית",
     skipHolidays: false,
+    isPaused: false,
     buildings: ["שטח משותף"],
     category: "אחזקה מונעת",
     assignees: ["סרגיי גורינוב"],
@@ -200,6 +204,7 @@ const SAMPLE_ROWS: Omit<MissionImportRow, "rowNumber">[] = [
     title: "בדיקה שנתית - אל פסק",
     frequency: "שנתית",
     skipHolidays: false,
+    isPaused: false,
     buildings: ["בניין A", "בניין B", "קומת קרקע", "שטח משותף"],
     category: "אחזקה מונעת",
     assignees: ["סמיון  קיפניס", "סרגיי גורינוב"],
@@ -242,6 +247,7 @@ function rowToCells(
     row.title,
     row.frequency,
     row.skipHolidays ? "yes" : "no",
+    row.isPaused ? "yes" : "no",
     row.buildings.join(";"),
     "",
     row.category,
@@ -545,6 +551,9 @@ export function parseMissionsImportContent(
   const skipHolidaysIndex = findHeaderIndex(header, [
     "skip_on_holidays", "skip_holidays", "לדלג בחגים", "דילוג בחגים",
   ]);
+  const pausedIndex = findHeaderIndex(header, [
+    "is_paused", "paused", "מושהית", "מושהה",
+  ]);
   const buildingsIndex = findHeaderIndex(header, ["בניינים", "buildings", "building"]);
   const categoryIndex = findHeaderIndex(header, ["קטגוריה", "category"]);
   const assigneesIndex = findHeaderIndex(header, [
@@ -612,6 +621,15 @@ export function parseMissionsImportContent(
       return { error: "invalidRow", message: `__row__:${rowNumber}` };
     }
 
+    let isPaused: boolean | null = null;
+    if (pausedIndex >= 0) {
+      const pausedValue = (cells[pausedIndex] ?? "").trim().toLowerCase();
+      isPaused = ["yes", "true", "1", "כן", "מושהית"].includes(pausedValue);
+      if (!isPaused && !["", "no", "false", "0", "לא"].includes(pausedValue)) {
+        return { error: "invalidRow", message: `__row__:${rowNumber}` };
+      }
+    }
+
     const rowLocations =
       locationsIndex >= 0 ? splitList(cells[locationsIndex] ?? "") : [];
     const checklistItems: MissionImportChecklistItem[] = [];
@@ -674,6 +692,7 @@ export function parseMissionsImportContent(
     const parsedRow: MissionImportRow = {
       rowNumber,
       skipHolidays,
+      isPaused,
       externalId,
       groupKey,
       title,
@@ -707,7 +726,7 @@ export function parseMissionsImportContent(
 
     const existing = groupedRows.get(groupKey);
     if (existing) {
-      if (existing.skipHolidays !== skipHolidays) {
+      if (existing.skipHolidays !== skipHolidays || existing.isPaused !== isPaused) {
         return { error: "invalidRow", message: `__row__:${rowNumber}` };
       }
       existing.checklistItems.push(...checklistItems);
@@ -950,6 +969,7 @@ export type ResolvedMissionImportRow = {
   description: string;
   schedule: ParsedMissionSchedule;
   skipHolidays: boolean;
+  isPaused: boolean | null;
   buildingId: string | null;
   floorId: string | null;
   areaId: string | null;
@@ -1110,6 +1130,7 @@ export function resolveMissionImportRows(options: {
       description: row.description.trim() || row.title,
       schedule: parseMissionFrequency(row.frequency),
       skipHolidays: row.skipHolidays,
+      isPaused: row.isPaused,
       buildingId: primaryLocation.buildingId,
       floorId: primaryLocation.floorId,
       areaId: primaryLocation.areaId,

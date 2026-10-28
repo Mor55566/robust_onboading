@@ -63,6 +63,45 @@ describe("scheduled missions CSV import", () => {
     }
   });
 
+  it("carries paused state from exporter rows through database resolution", () => {
+    for (const [value, expected] of [
+      ["yes", true], [" YES ", true], ["true", true], ["1", true],
+      ["no", false], ["false", false], ["0", false], ["", false],
+    ] as const) {
+      const parsed = parseMissionsImportContent(
+        `source_index,assignment_name,is_paused,checklist_name\n1,בדיקה,${value},ראשונה\n1,בדיקה,${value},שנייה`,
+        "export.csv",
+      );
+      assert.ok(!("error" in parsed), JSON.stringify(parsed));
+      assert.equal(parsed.rows[0]?.isPaused, expected);
+      const resolved = resolveMissionImportRows({
+        rows: parsed.rows,
+        buildings: [], floorsByBuilding: new Map(), areasByBuilding: new Map(),
+        users: [], categories: [], fallbackOpenedByUserId: "fallback",
+      });
+      assert.ok(resolved.ok);
+      assert.equal(resolved.rows[0]?.isPaused, expected);
+    }
+  });
+
+  it("leaves paused state unknown when the column is missing", () => {
+    const parsed = parseMissionsImportContent(
+      "source_index,assignment_name\n1,בדיקה", "legacy.csv",
+    );
+    assert.ok(!("error" in parsed));
+    assert.equal(parsed.rows[0]?.isPaused, null);
+  });
+
+  it("rejects invalid or conflicting paused values", () => {
+    for (const rows of ["1,בדיקה,maybe", "1,בדיקה,yes\n1,בדיקה,no"]) {
+      const parsed = parseMissionsImportContent(
+        `source_index,assignment_name,is_paused\n${rows}`, "invalid.csv",
+      );
+      assert.ok("error" in parsed);
+      assert.equal(parsed.error, "invalidRow");
+    }
+  });
+
   it("round-trips the generated template", () => {
     const parsed = parseMissionsImportContent(
       buildMissionsCsvTemplate(),

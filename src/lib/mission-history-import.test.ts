@@ -147,10 +147,8 @@ describe("inferChecklistItemFromValue", () => {
 });
 
 describe("parseMissionHistoryStatus", () => {
-  it("maps בוצע to closed and לא בוצע to open", () => {
-    assert.equal(parseMissionHistoryStatus("בוצע"), "closed");
-    assert.equal(parseMissionHistoryStatus("לא בוצע"), "open");
-    assert.equal(parseMissionHistoryStatus(""), "open");
+  it("always returns closed for history rows", () => {
+    assert.equal(parseMissionHistoryStatus(), "closed");
   });
 });
 

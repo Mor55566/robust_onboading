@@ -9,6 +9,8 @@ import {
   normalizeImportedResidentName,
   parseFileAttachmentsImportContent,
   parseFilesImportContent,
+  parseValidityMonths,
+  resolveExpirationDate,
   resolveFileAttachmentImportRows,
   resolveFileImportRows,
   splitTagNames,
@@ -82,6 +84,57 @@ describe("file series import (documents CSV, series-only)", () => {
     assert.equal("rows" in parsed, true);
     if (!("rows" in parsed)) return;
     assert.equal(parsed.rows[0]?.resident, "דייר - מנדיי");
+  });
+
+  it("resolves the end date century from תוקף", () => {
+    const parsed = parseFilesImportContent(
+      [
+        '"#","מזהה","נכס","שם","תוקף","תאריך התחלה","תאריך סיום"',
+        '1,"a","TOU Towers","Yearly","שנה","27/5/26","26/5/27"',
+        '2,"b","TOU Towers","Long","2376 חודשים","22/9/24","29/9/22"',
+        '3,"c","TOU Towers","Odd","לפעמים","22/9/24","29/9/22"',
+        '4,"d","TOU Towers","No dates","","",""',
+      ].join("\n"),
+      "files.csv",
+    );
+    assert.equal("rows" in parsed, true);
+    if (!("rows" in parsed)) return;
+    assert.deepEqual(
+      parsed.rows.map((row) => row.expirationDate),
+      ["2027-05-26", "2222-09-29", "2022-09-29", null],
+    );
+  });
+
+  it("parses validity periods to months", () => {
+    assert.equal(parseValidityMonths("חודש"), 1);
+    assert.equal(parseValidityMonths("6 חודשים"), 6);
+    assert.equal(parseValidityMonths("שנה"), 12);
+    assert.equal(parseValidityMonths("שנתיים"), 24);
+    assert.equal(parseValidityMonths("5 שנים"), 60);
+    assert.equal(parseValidityMonths(""), null);
+    assert.equal(parseValidityMonths("לפעמים"), null);
+  });
+
+  it("keeps the end date's day and month and four-digit years as written", () => {
+    // 22/9/24 + 2376 months is 22/9/2222; the end date still says the 29th.
+    assert.equal(resolveExpirationDate("29/9/22", "2024-09-22", 2376), "2222-09-29");
+    assert.equal(resolveExpirationDate("15/4/90", "2021-04-15", 828), "2090-04-15");
+    assert.equal(resolveExpirationDate("29/9/2022", "2024-09-22", 2376), "2022-09-29");
+    assert.equal(resolveExpirationDate("29/9/22", null, 2376), "2022-09-29");
+  });
+
+  it("carries the resolved end date onto the series import item", () => {
+    const result = resolveFileImportRows({
+      rows: [
+        fileRow({ externalId: "visitt-42", title: "Insurance", expirationDate: "2222-09-29" }),
+      ],
+      complexId: "complex-1",
+      complexes,
+      existing: [],
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.items[0]?.expirationDate, "2222-09-29");
   });
 
   it("creates a new series and keeps the template id as external id", () => {

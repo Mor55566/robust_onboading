@@ -268,11 +268,9 @@ export function inferChecklistItemFromValue(rawValue: string): {
   };
 }
 
-export function parseMissionHistoryStatus(value: string): TaskStatus {
-  const normalized = normalizeLookup(value);
-  if (normalized === "בוצע") return "closed";
-  if (normalized === "לא בוצע") return "open";
-  return "open";
+/** History rows are past occurrences, so they are always imported as closed. */
+export function parseMissionHistoryStatus(): TaskStatus {
+  return "closed";
 }
 
 function splitList(value: string): string[] {
@@ -411,7 +409,7 @@ export function parseMissionHistoryImportContent(
       externalId,
       title,
       statusRaw,
-      status: parseMissionHistoryStatus(statusRaw),
+      status: parseMissionHistoryStatus(),
       buildingsRaw: buildingsIndex >= 0 ? splitList(cells[buildingsIndex] ?? "") : [],
       categoryRaw: categoryIndex >= 0 ? (cells[categoryIndex] ?? "").trim() : "",
       assignedUserRaw: assignedUserIndex >= 0 ? (cells[assignedUserIndex] ?? "").trim() : "",
