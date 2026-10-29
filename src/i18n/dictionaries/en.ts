@@ -1175,6 +1175,8 @@ export const en = {
     savePassword: "Save password",
     saving: "Saving…",
     logout: "Log out",
+    copyComplexUuid: "Copy complex UUID",
+    complexUuidCopied: "Copied!",
     nameUpdated: "Name updated",
     passwordUpdated: "Password updated",
   },

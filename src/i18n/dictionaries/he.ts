@@ -1172,6 +1172,8 @@ export const he: Dictionary = {
     savePassword: "שמור סיסמה",
     saving: "שומר…",
     logout: "התנתקות",
+    copyComplexUuid: "העתקת UUID של המתחם",
+    complexUuidCopied: "הועתק!",
     nameUpdated: "השם עודכן",
     passwordUpdated: "הסיסמה עודכנה",
   },

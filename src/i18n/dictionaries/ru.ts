@@ -1178,6 +1178,8 @@ export const ru: Dictionary = {
     savePassword: "Сохранить пароль",
     saving: "Сохранение…",
     logout: "Выйти",
+    copyComplexUuid: "Копировать UUID комплекса",
+    complexUuidCopied: "Скопировано!",
     nameUpdated: "Имя обновлено",
     passwordUpdated: "Пароль обновлён",
   },

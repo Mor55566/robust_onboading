@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Dictionary } from "@/i18n/dictionaries/en";
 import type { SessionUser } from "@/lib/types";
 import { ComplexHeaderSelect } from "@/components/complex-header-select";
+import { CopyComplexUuidButton } from "@/components/copy-complex-uuid-button";
 import { LogoutButton } from "@/components/logout-button";
 import { NavUploadStatusDot } from "@/components/nav-upload-status-dot";
 
@@ -73,6 +74,10 @@ export function DashboardShell({
           <div className="mb-2 truncate px-2 text-xs text-[var(--text-muted)]" dir="ltr">
             {user.email}
           </div>
+          <CopyComplexUuidButton
+            label={dict.profile.copyComplexUuid}
+            copiedLabel={dict.profile.complexUuidCopied}
+          />
           <LogoutButton label={dict.profile.logout} />
         </div>
       </aside>
