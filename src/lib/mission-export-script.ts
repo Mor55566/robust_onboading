@@ -4,6 +4,8 @@ export const MISSION_EXPORT_SCRIPT = `/*
  *
  * Opens only assignment links in column 2. It never clicks the row checkbox.
  * Also records whether each assignment is paused (never clicks "הפעל").
+ * Reads the location order from ⋯ → "ערוך" → "סדר" and leaves the edit
+ * wizard with history.back() — it never presses "שמור" or "ביטול".
  */
 (async () => {
   'use strict';
@@ -30,6 +32,12 @@ export const MISSION_EXPORT_SCRIPT = `/*
     DEFAULT_TEST_ROWS: 1,
     MAX_REQUESTED_ROWS: 100,
     GRID_SELECTOR: '[data-test-id="assignments-table"] [role="grid"]',
+    ACTIONS_TOGGLE_SELECTOR: '[data-test-id="assignment-actions-dropdown"] .dropdown-button',
+    EDIT_LINK_SELECTOR: 'a[data-test-id="edit-assignment-dropdown-button"]',
+    EDIT_FORM_SELECTOR: 'form.assignment-form',
+    ORDER_STEP_TITLE: 'סדר',
+    ORDER_ROW_SELECTOR: '.site-sort-wrapper[data-id]',
+    ORDER_TIMEOUT_MS: 6000,
   });
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -187,6 +195,115 @@ export const MISSION_EXPORT_SCRIPT = `/*
     );
 
     button.click();
+  }
+
+  // Reads the location order from the edit wizard's "סדר" step: ⋯ → "ערוך" →
+  // "סדר". It never presses a button inside the edit form ("שמור"/"ביטול");
+  // it leaves with history.back(), so nothing can be saved. \`returned\` is
+  // false only when the page could not get back out of the wizard.
+  async function readSiteOrder(modal, assignmentHref) {
+    const toggle = modal.querySelector(CONFIG.ACTIONS_TOGGLE_SELECTOR);
+    if (!(toggle instanceof HTMLElement)) {
+      console.warn('תפריט ⋯ של המשימה לא נמצא; המשימה תיוצא לפי סדר הכרטיסים.');
+      return { siteOrder: [], returned: true };
+    }
+
+    const assignmentId = new URL(assignmentHref).pathname.split('/')[2];
+
+    await randomDelay(
+      CONFIG.BEFORE_OPTION_CLICK_MIN_MS,
+      CONFIG.BEFORE_OPTION_CLICK_MAX_MS
+    );
+    activateCloseButton(toggle);
+
+    let editLink;
+    try {
+      editLink = await waitFor(() => {
+        const link = document.querySelector(CONFIG.EDIT_LINK_SELECTOR);
+        return link instanceof HTMLAnchorElement &&
+          link.getAttribute('href') === \`/assignment/\${assignmentId}/edit\` &&
+          clean(link.textContent) === 'ערוך'
+          ? link
+          : null;
+      }, 3000, 'the exact "ערוך" link');
+    } catch (error) {
+      activateCloseButton(toggle);
+      console.warn('הקישור "ערוך" לא נמצא; המשימה תיוצא לפי סדר הכרטיסים.', error);
+      return { siteOrder: [], returned: true };
+    }
+
+    await randomDelay(
+      CONFIG.BEFORE_OPTION_CLICK_MIN_MS,
+      CONFIG.BEFORE_OPTION_CLICK_MAX_MS
+    );
+    editLink.click();
+
+    let siteOrder = [];
+    try {
+      const stepButton = await waitFor(() => {
+        const step = [
+          ...document.querySelectorAll(
+            \`\${CONFIG.EDIT_FORM_SELECTOR} .stepper-wrapper .step-wrapper\`
+          ),
+        ].find(
+          (element) =>
+            clean(element.querySelector('.step-title')?.textContent) ===
+            CONFIG.ORDER_STEP_TITLE
+        );
+        return step?.querySelector('button.step-number-button[type="button"]') || null;
+      }, CONFIG.ORDER_TIMEOUT_MS, 'the "סדר" step');
+
+      await randomDelay(
+        CONFIG.BEFORE_OPTION_CLICK_MIN_MS,
+        CONFIG.BEFORE_OPTION_CLICK_MAX_MS
+      );
+      stepButton.click();
+
+      const rows = await waitFor(() => {
+        const found = [
+          ...document.querySelectorAll(
+            \`\${CONFIG.EDIT_FORM_SELECTOR} \${CONFIG.ORDER_ROW_SELECTOR}\`
+          ),
+        ];
+        return found.length ? found : null;
+      }, CONFIG.ORDER_TIMEOUT_MS, 'the sorted locations');
+
+      siteOrder = rows.map((row) => {
+        const name = clean(row.querySelector('.site-name > div:first-child')?.textContent);
+        const parents = [...row.querySelectorAll('.site-name .grey-text')]
+          .map((element) => clean(element.textContent))
+          .filter(Boolean);
+        // The first parent is the building, which card locations leave out.
+        return {
+          id: row.getAttribute('data-id'),
+          name,
+          path: [...parents.slice(1), name].join(' < '),
+        };
+      });
+    } catch (error) {
+      console.warn('מסך הסדר לא נקרא; המשימה תיוצא לפי סדר הכרטיסים.', error);
+    }
+
+    if (location.pathname.endsWith('/edit')) {
+      history.back();
+      try {
+        await waitFor(
+          () =>
+            !location.pathname.endsWith('/edit') &&
+            !document.querySelector(CONFIG.EDIT_FORM_SELECTOR),
+          CONFIG.CLOSE_NAVIGATION_TIMEOUT_MS,
+          'leaving the edit wizard'
+        );
+      } catch (error) {
+        console.warn('לא ניתן היה לצאת ממסך העריכה בבטחה.', error);
+        return { siteOrder, returned: false };
+      }
+    } else if (document.querySelector(CONFIG.EDIT_FORM_SELECTOR)) {
+      console.warn('מסך העריכה נפתח בלי כתובת /edit; עצרתי כדי לא לגעת בו.');
+      return { siteOrder, returned: false };
+    }
+
+    return { siteOrder, returned: true };
   }
 
   function directChildrenByClass(root, className) {
@@ -468,28 +585,89 @@ export const MISSION_EXPORT_SCRIPT = `/*
     });
 
     const effectiveSections = sections.length ? sections : [modal];
-    const checklist = effectiveSections.flatMap((section, sectionIndex) => {
-      const locations = extractLocations(section);
-      const items = extractChecklistItems(section);
-      const checklistTitle = locations.length
-        ? locations.join(' | ')
-        : \`בדיקות \${sectionIndex + 1}\`;
 
-      return items.map((item) => ({
-        ...common,
-        location: locations.join(';'),
-        checklist_title: checklistTitle,
-        ...item,
+    return {
+      common,
+      sections: effectiveSections.map((section) => ({
+        locations: extractLocations(section),
+        items: extractChecklistItems(section),
+      })),
+    };
+  }
+
+  // The card lists a location as "parent < … < name" while the "סדר" step
+  // shows the name and its parents separately; both drop the building badge.
+  function locationLeaf(location) {
+    return clean(location.split(' < ').at(-1));
+  }
+
+  function findSiteOrder(location, siteOrder) {
+    const byPath = siteOrder.findIndex((site) => site.path === clean(location));
+    if (byPath >= 0) return byPath + 1;
+
+    const leaf = locationLeaf(location);
+    const byName = siteOrder.filter((site) => site.name === leaf);
+    return byName.length === 1 ? siteOrder.indexOf(byName[0]) + 1 : null;
+  }
+
+  // Visitt's execution form shows one card per location, ordered by the edit
+  // wizard's "סדר" step rather than by checklist card. With that order known,
+  // emit every location as its own checklist in that order; without it, keep
+  // one checklist per card as before.
+  function buildAssignmentExport({ common, sections }, siteOrder) {
+    const slots = sections.flatMap((section, sectionIndex) => {
+      if (!section.locations.length || !siteOrder.length) {
+        return [{
+          section,
+          title: section.locations.length
+            ? section.locations.join(' | ')
+            : \`בדיקות \${sectionIndex + 1}\`,
+          locations: section.locations,
+          order: null,
+        }];
+      }
+
+      return section.locations.map((location) => ({
+        section,
+        title: location,
+        locations: [location],
+        order: findSiteOrder(location, siteOrder),
       }));
     });
+
+    const unmatched = slots.filter((slot) => slot.order === null && slot.locations.length);
+    if (siteOrder.length && unmatched.length) {
+      console.warn(
+        'חלק מהמיקומים לא נמצאו במסך הסדר ויופיעו בסוף:',
+        unmatched.map((slot) => slot.title)
+      );
+    }
+
+    // Stable sort: unmatched slots keep their card order after the ordered ones.
+    const ordered = slots
+      .map((slot, index) => ({ slot, index }))
+      .sort((left, right) =>
+        (left.slot.order ?? Infinity) - (right.slot.order ?? Infinity) ||
+        left.index - right.index
+      )
+      .map(({ slot }) => slot);
+
+    const checklist = ordered.flatMap((slot) =>
+      slot.section.items.map((item) => ({
+        ...common,
+        location: slot.locations.join(';'),
+        location_order: slot.order ?? '',
+        checklist_title: slot.title,
+        ...item,
+      }))
+    );
 
     return {
       common: {
         ...common,
-        locations: [
-          ...new Set(effectiveSections.flatMap((section) => extractLocations(section))),
-        ],
-        checklist_count: effectiveSections.length,
+        locations: [...new Set(ordered.flatMap((slot) => slot.locations))],
+        checklist_count: ordered.length,
+        site_order_found: siteOrder.length > 0,
       },
       checklist,
     };
@@ -542,6 +720,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
       'is_paused',
       'assigned_users',
       'location',
+      'location_order',
       'checklist_title',
       'checklist_order',
       'checklist_name',
@@ -689,46 +868,75 @@ export const MISSION_EXPORT_SCRIPT = `/*
       'the read-only assignment modal'
     );
 
-    const closeButton = modal.querySelector(CONFIG.CLOSE_SELECTOR);
+    const findCloseButton = (currentModal) => {
+      const button = currentModal.querySelector(CONFIG.CLOSE_SELECTOR);
 
-    if (!(closeButton instanceof HTMLButtonElement)) {
-      throw new Error(
-        'Safety stop: the exact modal close button was not found.'
-      );
-    }
+      if (!(button instanceof HTMLButtonElement)) {
+        throw new Error(
+          'Safety stop: the exact modal close button was not found.'
+        );
+      }
 
-    if (
-      closeButton.closest('[data-test-id="assignment-actions-dropdown"]')
-    ) {
-      throw new Error(
-        'Safety stop: close selector resolved inside an actions menu.'
-      );
-    }
+      if (button.closest('[data-test-id="assignment-actions-dropdown"]')) {
+        throw new Error(
+          'Safety stop: close selector resolved inside an actions menu.'
+        );
+      }
+
+      return button;
+    };
+
+    findCloseButton(modal);
 
     await expandMultiSelectOptions(modal);
 
-    const extracted = extractAssignment(modal, index);
+    const cards = extractAssignment(modal, index);
+    const { siteOrder, returned } = await readSiteOrder(modal, assignmentHref);
+    const extracted = buildAssignmentExport(cards, siteOrder);
 
     exportedAssignments.push(extracted);
     exportedRows.push(...extracted.checklist);
 
-    await randomDelay(
-      CONFIG.BEFORE_CLOSE_MIN_MS,
-      CONFIG.BEFORE_CLOSE_MAX_MS
-    );
+    if (!returned) {
+      console.warn(
+        'החילוץ נעצר כדי לא לגעת במסך העריכה. הנתונים שכבר נקראו יורדו ולא תיפתח שורה נוספת.'
+      );
+      break;
+    }
 
-    activateCloseButton(closeButton);
+    // Coming back from the edit wizard re-renders the assignment window.
+    const currentModal =
+      location.href === tableUrl
+        ? null
+        : await waitFor(
+            () => visibleModal(),
+            CONFIG.OPEN_TIMEOUT_MS,
+            'the assignment modal after leaving the edit wizard'
+          );
 
     let closeConfirmed = true;
 
     try {
+      if (!currentModal) throw new Error('already back at the table');
+
+      const closeButton = findCloseButton(currentModal);
+
+      await randomDelay(
+        CONFIG.BEFORE_CLOSE_MIN_MS,
+        CONFIG.BEFORE_CLOSE_MAX_MS
+      );
+
+      activateCloseButton(closeButton);
+
       await waitFor(
-        () => location.href === tableUrl || !isVisible(modal),
+        () => location.href === tableUrl || !isVisible(currentModal),
         CONFIG.CLOSE_CLICK_TIMEOUT_MS,
         'the assignment modal to close after activating X'
       );
     } catch (error) {
-      if (location.href === assignmentHref) {
+      if (location.href === tableUrl) {
+        // Already back at the table (the wizard's history.back() closed it).
+      } else if (location.href === assignmentHref) {
         history.back();
 
         try {

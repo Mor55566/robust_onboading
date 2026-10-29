@@ -245,6 +245,41 @@ describe("scheduled missions CSV import", () => {
     assert.equal(items[0]?.checklistTitle, "ציוד");
   });
 
+  it("keeps one checklist per location in Visitt's location order", () => {
+    // Identical questions on every location would normally collapse into one
+    // checklist; with location_order they must stay separate and ordered.
+    const parsed = parseMissionsImportContent(
+      [
+        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
+        '1,"סיור","בניין A / קומה 2",3,"בניין A / קומה 2",1,"בדוק",checkbox',
+        '1,"סיור","בניין A / קומה 3",1,"בניין A / קומה 3",1,"בדוק",checkbox',
+        '1,"סיור","בניין A / קומה 1",2,"בניין A / קומה 1",1,"בדוק",checkbox',
+      ].join("\n"),
+      "ordered.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+
+    const groups = groupMissionChecklistItems(parsed.rows[0]!.checklistItems);
+    assert.deepEqual(
+      groups.map((group) => group.title),
+      ["בניין A / קומה 3", "בניין A / קומה 1", "בניין A / קומה 2"],
+    );
+  });
+
+  it("keeps a comma inside an ordered row's location name", () => {
+    const location = "קומה 36 / גלריה 1/ מפוח R1A / יניקה משרותים קומות 26-34 , קומות 10 עד מינוס 4";
+    const parsed = parseMissionsImportContent(
+      [
+        "source_index,assignment_name,location,location_order,checklist_title,checklist_name",
+        `1,"סיור","${location}",1,"${location}","בדוק"`,
+      ].join("\n"),
+      "comma.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+    assert.deepEqual(parsed.rows[0]?.locations, [location]);
+    assert.deepEqual(parsed.rows[0]?.checklistItems[0]?.locations, [location]);
+  });
+
   it("resolves and retains every imported mission location", () => {
     const parsed = parseMissionsImportContent(
       [

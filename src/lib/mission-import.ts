@@ -83,7 +83,19 @@ export type MissionImportChecklistItem = {
   options: string[];
   /** Raw location paths belonging to this checklist row. */
   locations?: string[];
+  /**
+   * 1-based position of this row's location in Visitt's execution order (the
+   * assignment's "סדר" step), when the exporter could read it.
+   */
+  locationOrder?: number | null;
 };
+
+function parseLocationOrder(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const order = Number(trimmed);
+  return order > 0 ? order : null;
+}
 
 export type MissionImportEquipment = {
   id: string;
@@ -118,6 +130,9 @@ export function collapseLocationChecklistItems(
   locations: string[],
 ): MissionImportChecklistItem[] {
   if (items.length === 0 || locations.length === 0) return items;
+  // An ordered export keeps one checklist per location on purpose: collapsing
+  // would move the locations into checklist_locations, which has no order.
+  if (items.some((item) => item.locationOrder != null)) return items;
 
   const locationTitles = new Set(locations.map((location) => normalizeLookup(location)));
   const isLocationFlattenedExport = items.every((item) =>
@@ -165,13 +180,25 @@ export function groupMissionChecklistItems(
     group.push(item);
     groups.set(title, group);
   }
-  return [...groups].map(([title, groupedItems]) => ({
-    title,
-    items: groupedItems,
-    locations: [
-      ...new Set(groupedItems.flatMap((item) => item.locations ?? [])),
-    ],
-  }));
+  const groupOrder = (groupedItems: MissionImportChecklistItem[]) =>
+    groupedItems.find((item) => item.locationOrder != null)?.locationOrder ??
+    Number.POSITIVE_INFINITY;
+  // Visitt's location order wins over file row order (a re-sorted CSV still
+  // imports in execution order); groups without one keep their file order.
+  return [...groups]
+    .map(([title, groupedItems], index) => ({ title, groupedItems, index }))
+    .sort(
+      (left, right) =>
+        groupOrder(left.groupedItems) - groupOrder(right.groupedItems) ||
+        left.index - right.index,
+    )
+    .map(({ title, groupedItems }) => ({
+      title,
+      items: groupedItems,
+      locations: [
+        ...new Set(groupedItems.flatMap((item) => item.locations ?? [])),
+      ],
+    }));
 }
 
 export type ParsedMissionSchedule = {
@@ -582,6 +609,7 @@ export function parseMissionsImportContent(
   ]);
   const checklistOrderIndex = findHeaderIndex(header, ["checklist_order", "checklist order"]);
   const checklistTitleIndex = findHeaderIndex(header, ["checklist_title", "checklist title"]);
+  const locationOrderIndex = findHeaderIndex(header, ["location_order", "location order"]);
   const checklistNameIndex = findHeaderIndex(header, ["checklist_name", "checklist name"]);
   const fieldTypeIndex = findHeaderIndex(header, ["field_type", "field type"]);
   const fieldTypeOriginalIndex = findHeaderIndex(header, ["field_type_original", "field type original"]);
@@ -630,8 +658,13 @@ export function parseMissionsImportContent(
       }
     }
 
+    const locationCell = locationsIndex >= 0 ? (cells[locationsIndex] ?? "").trim() : "";
+    // An ordered export row holds exactly one location, and Visitt names may
+    // contain commas ("קומות 26-34 , קומות 10…"), so it must not be split.
     const rowLocations =
-      locationsIndex >= 0 ? splitList(cells[locationsIndex] ?? "") : [];
+      parseLocationOrder(locationOrderIndex >= 0 ? cells[locationOrderIndex] ?? "" : "") != null
+        ? locationCell ? [locationCell] : []
+        : splitList(locationCell);
     const checklistItems: MissionImportChecklistItem[] = [];
     if (checklistNameIndex >= 0 && (cells[checklistNameIndex] ?? "").trim()) {
       const rawFieldType = fieldTypeIndex >= 0 ? (cells[fieldTypeIndex] ?? "").trim().toLowerCase() : "checkbox";
@@ -686,6 +719,9 @@ export function parseMissionsImportContent(
         numberMax: numberRule === "between" || numberRule === "less_than" ? numberMax : null,
         options: itemType === "options" ? parsedOptions : [],
         locations: rowLocations,
+        locationOrder: parseLocationOrder(
+          locationOrderIndex >= 0 ? cells[locationOrderIndex] ?? "" : "",
+        ),
       });
     }
 
