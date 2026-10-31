@@ -69,6 +69,18 @@ export function CreateUserModal({
             <input id="new-user-phone" name="phone_number" type="tel" inputMode="numeric" />
           </div>
           <div className="space-y-1.5">
+            <label htmlFor="new-user-password" className="field-label">
+              {dict.superAdmin.createUserPasswordLabel}
+            </label>
+            <input
+              id="new-user-password"
+              name="password"
+              type="password"
+              minLength={8}
+              autoComplete="new-password"
+            />
+          </div>
+          <div className="space-y-1.5">
             <label htmlFor="new-user-role" className="field-label">
               {dict.superAdmin.createUserRoleLabel}
             </label>

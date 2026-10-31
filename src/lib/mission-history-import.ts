@@ -51,6 +51,26 @@ export const MISSION_HISTORY_IMPORT_HEADERS = [
   "עורכים",
 ] as const;
 
+/** Headers matching the Visitt "open missions" export columns. */
+export const OPEN_MISSIONS_IMPORT_HEADERS = [
+  "#",
+  "מזהה",
+  "שם",
+  "נכס",
+  "תדירות",
+  "בניינים",
+  "כתובות בניין",
+  "מיקומים",
+  "משתמש משויך",
+  "קטגוריה",
+  "תאריך התחלה",
+  "סטאטוס",
+  "תאריך יעד מקורי",
+  "תאריך יעד מעודכן",
+  "נפתח בשנית ע״י",
+  "זמן פתיחה מחדש",
+] as const;
+
 export type MissionHistoryChecklistItemType =
   | "checklist"
   | "text"
@@ -84,6 +104,10 @@ export type MissionHistoryImportRow = {
   dueAt: string | null;
   imageUrls: string[];
   checklistItems: MissionHistoryChecklistItem[];
+  /** Open-missions export only: when the occurrence opened. */
+  startAt?: string | null;
+  /** Open-missions export only: "מיקומים" location paths, for placement. */
+  locationsRaw?: string[];
 };
 
 /** Known closed-set status tokens mapped to a canonical option pair. */
@@ -358,16 +382,110 @@ function rowToCells(
   ];
 }
 
+const OPEN_MISSIONS_SAMPLE_ROWS: Omit<MissionHistoryImportRow, "rowNumber" | "status">[] = [
+  {
+    externalId: "6abd789dc44fa4b61514aebc",
+    title: "בדיקות במת מספריים",
+    statusRaw: "פתוח",
+    buildingsRaw: ["שטח משותף"],
+    categoryRaw: "אחזקה מונעת",
+    assignedUserRaw: "סרגיי גורינוב",
+    closedAt: null,
+    resolvedByNameRaw: "",
+    note: "",
+    dueAt: "31/12/26",
+    imageUrls: [],
+    checklistItems: [],
+    startAt: "1/10/26",
+    locationsRaw: ["מינוס 1 / גרעין A / חדר דחסנים / במת מספריים"],
+  },
+];
+
+function openMissionRowToCells(
+  row: Omit<MissionHistoryImportRow, "rowNumber" | "status">,
+  index: number,
+): string[] {
+  return [
+    String(index),
+    row.externalId,
+    row.title,
+    "",
+    "",
+    row.buildingsRaw.join(";"),
+    "",
+    (row.locationsRaw ?? []).join(";"),
+    row.assignedUserRaw,
+    row.categoryRaw,
+    row.startAt ?? "",
+    row.statusRaw,
+    row.dueAt ?? "",
+    "",
+    "",
+    "",
+  ];
+}
+
+export function buildOpenMissionsCsvTemplate(): string {
+  return buildCsvTemplate(
+    [...OPEN_MISSIONS_IMPORT_HEADERS],
+    OPEN_MISSIONS_SAMPLE_ROWS.map((row, index) => openMissionRowToCells(row, index + 1)),
+  );
+}
+
+export function buildOpenMissionsExcelTemplate(): string {
+  return buildExcelTemplate(
+    "Open missions",
+    [...OPEN_MISSIONS_IMPORT_HEADERS],
+    OPEN_MISSIONS_SAMPLE_ROWS.map((row, index) =>
+      openMissionRowToCells(row, index + 1).map((value) => ({
+        value,
+        type: "String" as const,
+      })),
+    ),
+  );
+}
+
+/**
+ * The "מיקומים" cell lists each location as its breadcrumb chain
+ * ("A < A / B < A / B / C"); only the deepest path of each entry is kept.
+ */
+function parseOpenMissionLocations(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/[;\n]/)
+        .map((entry) => entry.split("<").pop()!.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 export function parseMissionHistoryImportContent(
   content: string,
   fileName: string,
+): { rows: MissionHistoryImportRow[] } | { error: ImportParseError; message?: string } {
+  return parseMissionRows(content, fileName, "closed");
+}
+
+/** Open (not yet done) occurrences from the Visitt open-missions export. */
+export function parseOpenMissionsImportContent(
+  content: string,
+  fileName: string,
+): { rows: MissionHistoryImportRow[] } | { error: ImportParseError; message?: string } {
+  return parseMissionRows(content, fileName, "open");
+}
+
+function parseMissionRows(
+  content: string,
+  fileName: string,
+  status: TaskStatus,
 ): { rows: MissionHistoryImportRow[] } | { error: ImportParseError; message?: string } {
   const raw = parseRawRows(content, fileName);
   if ("error" in raw) return raw;
 
   const header = raw.rows[0]!.map((cell) => normalizeHeader(cell));
   const externalIdIndex = findHeaderIndex(header, ["מזהה", "external id", "external_id"]);
-  const titleIndex = findHeaderIndex(header, ["משימה", "title", "name"]);
+  const titleIndex = findHeaderIndex(header, ["משימה", "שם", "title", "name"]);
   const statusIndex = findHeaderIndex(header, ["סטאטוס", "סטטוס", "status"]);
   const buildingsIndex = findHeaderIndex(header, ["בניינים", "buildings", "building"]);
   const categoryIndex = findHeaderIndex(header, ["קטגוריה", "category"]);
@@ -376,6 +494,9 @@ export function parseMissionHistoryImportContent(
   const resolvedByIndex = findHeaderIndex(header, ["בוצע על ידי", "resolved by", "done by"]);
   const noteIndex = findHeaderIndex(header, ["הערה", "note"]);
   const dueAtIndex = findHeaderIndex(header, ["תאריך יעד מקורי", "due at", "due_at"]);
+  const updatedDueAtIndex = findHeaderIndex(header, ["תאריך יעד מעודכן", "updated due at"]);
+  const startAtIndex = findHeaderIndex(header, ["תאריך התחלה", "start date", "start at"]);
+  const locationsIndex = findHeaderIndex(header, ["מיקומים", "locations"]);
   const imagesIndex = findHeaderIndex(header, ["תמונות", "images"]);
   const checklistIndex = findHeaderIndex(header, ["בדיקות", "checklist"]);
 
@@ -409,16 +530,26 @@ export function parseMissionHistoryImportContent(
       externalId,
       title,
       statusRaw,
-      status: parseMissionHistoryStatus(),
+      status: status === "closed" ? parseMissionHistoryStatus() : status,
       buildingsRaw: buildingsIndex >= 0 ? splitList(cells[buildingsIndex] ?? "") : [],
       categoryRaw: categoryIndex >= 0 ? (cells[categoryIndex] ?? "").trim() : "",
       assignedUserRaw: assignedUserIndex >= 0 ? (cells[assignedUserIndex] ?? "").trim() : "",
       closedAt: closedAtIndex >= 0 ? parseImportDate(cells[closedAtIndex] ?? "") : null,
       resolvedByNameRaw: resolvedByIndex >= 0 ? (cells[resolvedByIndex] ?? "").trim() : "",
       note: noteIndex >= 0 ? (cells[noteIndex] ?? "").trim() : "",
-      dueAt: dueAtIndex >= 0 ? parseImportDate(cells[dueAtIndex] ?? "") : null,
+      // A rescheduled occurrence is due on its updated date.
+      dueAt:
+        (updatedDueAtIndex >= 0 ? parseImportDate(cells[updatedDueAtIndex] ?? "") : null) ??
+        (dueAtIndex >= 0 ? parseImportDate(cells[dueAtIndex] ?? "") : null),
       imageUrls: imagesIndex >= 0 ? splitUrls(cells[imagesIndex] ?? "") : [],
       checklistItems: parseMissionHistoryChecklistBlob(checklistRaw),
+      ...(status === "closed"
+        ? {}
+        : {
+            startAt: startAtIndex >= 0 ? parseImportDate(cells[startAtIndex] ?? "") : null,
+            locationsRaw:
+              locationsIndex >= 0 ? parseOpenMissionLocations(cells[locationsIndex] ?? "") : [],
+          }),
     });
   }
 
@@ -448,6 +579,7 @@ export type ResolvedMissionHistoryImportRow = MissionHistoryImportRow & {
   areaId: string | null;
   categoryId: string | null;
   resolvedByUserId: string | null;
+  assignedUserId: string | null;
   checklistGroups: Array<{
     title: string;
     items: MissionHistoryChecklistItem[];
@@ -507,15 +639,26 @@ function resolveChecklistLocation(
 }
 
 /**
- * Where to place a history row that has no scheduled mission: its "בניינים"
- * building, else its first resolvable check location, else the complex's only
- * building.
+ * Where to place a history row that has no scheduled mission: its first
+ * resolvable "מיקומים" path (open missions), else its "בניינים" building, else
+ * its first resolvable check location, else the complex's only building.
  */
 function resolveStandaloneLocation(
   row: MissionHistoryImportRow,
   checklistGroups: ResolvedMissionHistoryImportRow["checklistGroups"],
   buildings: TaskImportBuilding[],
+  floorsByBuilding: Map<string, AreaImportFloor[]>,
+  areasByBuilding: Map<string, EquipmentLocationArea[]>,
 ): { buildingId: string; floorId: string | null; areaId: string | null } | null {
+  for (const location of row.locationsRaw ?? []) {
+    const resolved = resolveChecklistLocation(
+      location,
+      buildings,
+      floorsByBuilding,
+      areasByBuilding,
+    );
+    if (resolved) return resolved;
+  }
   for (const name of row.buildingsRaw) {
     const building = resolveBuildingByName(name, buildings);
     if (building) return { buildingId: building.id, floorId: null, areaId: null };
@@ -573,7 +716,13 @@ export function classifyMissionHistoryImportRows(options: {
     // locations so it still shows under the complex.
     const fallbackLocation = template
       ? null
-      : resolveStandaloneLocation(row, checklistGroups, options.buildings);
+      : resolveStandaloneLocation(
+          row,
+          checklistGroups,
+          options.buildings,
+          options.floorsByBuilding,
+          options.areasByBuilding,
+        );
 
     let classification: MissionHistoryClassification;
     let skipReason: ResolvedMissionHistoryImportRow["skipReason"];
@@ -609,6 +758,9 @@ export function classifyMissionHistoryImportRows(options: {
       areaId: template ? template.areaId : (fallbackLocation?.areaId ?? null),
       categoryId,
       resolvedByUserId,
+      assignedUserId: row.assignedUserRaw
+        ? (options.usersByNormalizedName.get(normalizeLookup(row.assignedUserRaw)) ?? null)
+        : null,
       checklistGroups,
     };
   });

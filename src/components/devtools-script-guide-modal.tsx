@@ -9,6 +9,8 @@ export type DevtoolsScriptGuideCopy = {
   intro: string;
   step1Title: string;
   step1Body: string;
+  /** Optional screenshot shown under step 1 (path under /public). */
+  step1Image?: { src: string; alt: string };
   step4Title: string;
   step4Body: string;
   scriptNote: string;
@@ -111,7 +113,16 @@ export function DevtoolsScriptGuideModal({
             number={1}
             title={copy.step1Title}
             body={copy.step1Body}
-          />
+          >
+            {copy.step1Image ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={copy.step1Image.src}
+                alt={copy.step1Image.alt}
+                className="max-h-80 w-auto rounded-xl border"
+              />
+            ) : null}
+          </GuideStep>
 
           <GuideStep
             number={2}

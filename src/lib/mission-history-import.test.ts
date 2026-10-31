@@ -6,6 +6,7 @@ import {
   parseMissionHistoryChecklistBlob,
   parseMissionHistoryImportContent,
   parseMissionHistoryStatus,
+  parseOpenMissionsImportContent,
 } from "./mission-history-import";
 
 describe("mission history checklist blob parser", () => {
@@ -366,5 +367,25 @@ describe("classifyMissionHistoryImportRows", () => {
     });
     assert.equal(result[0]?.classification, "skip");
     assert.equal(result[0]?.skipReason, "externalIdConflict");
+  });
+});
+
+describe("open missions import", () => {
+  it("parses the Visitt open missions export as open occurrences", () => {
+    const csv = [
+      '"#","מזהה","שם","נכס","תדירות","בניינים","כתובות בניין","מיקומים","משתמש משויך","קטגוריה","תאריך התחלה","סטאטוס","תאריך יעד מקורי","תאריך יעד מעודכן","נפתח בשנית ע״י","זמן פתיחה מחדש"',
+      '1,"6abd789dc44fa4b61514aebc","בדיקות במת מספריים","TOU Towers","תלת חודשית","שטח משותף","","מינוס 1 < מינוס 1 / גרעין A < מינוס 1 / גרעין A / חדר דחסנים","סרגיי גורינוב","אחזקה מונעת","1/10/26","פתוח","31/12/26","15/1/27","",""',
+    ].join("\n");
+    const parsed = parseOpenMissionsImportContent(csv, "open.csv");
+    assert.ok("rows" in parsed);
+    const row = parsed.rows[0]!;
+    assert.equal(row.externalId, "6abd789dc44fa4b61514aebc");
+    assert.equal(row.title, "בדיקות במת מספריים");
+    assert.equal(row.status, "open");
+    assert.equal(row.assignedUserRaw, "סרגיי גורינוב");
+    assert.equal(row.startAt, "2026-10-01T00:00:00+03:00");
+    assert.equal(row.dueAt, "2027-01-15T00:00:00+03:00");
+    assert.deepEqual(row.locationsRaw, ["מינוס 1 / גרעין A / חדר דחסנים"]);
+    assert.deepEqual(row.checklistItems, []);
   });
 });

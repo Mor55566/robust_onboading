@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "crypto";
 import { z } from "zod";
-import { requireUser } from "@/lib/auth";
+import { hashPassword, requireUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { usersSql } from "@/lib/users-db";
 import { getDictionary } from "@/i18n/get-dictionary";
@@ -60,6 +60,10 @@ import {
 } from "@/lib/file-import";
 import { listResidentsForImport, residentSql } from "@/lib/resident-db";
 import type { ResidentImportRow } from "@/lib/resident-import";
+import {
+  RESIDENT_ADMIN_ROLE,
+  type ResidentUserImportRow,
+} from "@/lib/resident-user-import";
 import { isVisittUser, type UserImportRow } from "@/lib/user-import";
 import type { FloorImportRow } from "@/lib/data-import";
 import { importAreasAction } from "@/app/actions/admin-shared";
@@ -899,6 +903,149 @@ export async function importResidentsAction(
   };
 }
 
+/**
+ * Imports tenant contacts (resident_users) into existing residents.
+ *
+ * Silent by design: this writes straight to the residents database and never
+ * sets a password, sends an email/SMS/push, or writes the audit log that the
+ * notifications service reads — the contacts must not hear from the system
+ * just because onboarding created them.
+ */
+export async function importResidentUsersAction(
+  complexId: string,
+  rows: ResidentUserImportRow[],
+): Promise<{
+  error?: string;
+  success?: string;
+  created?: number;
+  updated?: number;
+}> {
+  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
+  if (user.role !== "super_admin") return { error: dict.errors.unauthorized };
+
+  const rowSchema = z.object({
+    rowNumber: z.number().int().positive(),
+    resident: z.string().trim().min(1),
+    name: z.string().trim().min(1),
+    role: z.string().trim(),
+    email: z.union([z.literal(""), z.email()]),
+    phone: z.string().trim(),
+  });
+  const parsedRows = z.array(rowSchema).max(10_000).safeParse(rows);
+  if (!parsedRows.success) return { error: dict.superAdmin.residentUsersUploadInvalidRow };
+  if (parsedRows.data.length === 0) return { error: dict.superAdmin.residentUsersUploadEmpty };
+
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) return { error: dict.superAdmin.complexNotFound };
+
+  const residents = await residentSql`
+    SELECT id, name
+    FROM residents
+    WHERE complex_id = ${scopedComplexId}
+      AND deleted_at IS NULL
+  `;
+  const residentsByName = new Map<string, string[]>();
+  for (const resident of residents) {
+    const key = (resident.name as string).trim().toLocaleLowerCase();
+    residentsByName.set(key, [...(residentsByName.get(key) ?? []), resident.id as string]);
+  }
+
+  const missing = new Set<string>();
+  const matched: (ResidentUserImportRow & { residentId: string })[] = [];
+  for (const row of parsedRows.data) {
+    const ids = residentsByName.get(row.resident.toLocaleLowerCase()) ?? [];
+    if (ids.length !== 1) {
+      missing.add(row.resident);
+      continue;
+    }
+    matched.push({ ...row, residentId: ids[0]! });
+  }
+  if (matched.length === 0) {
+    return {
+      error: t(dict.superAdmin.residentUsersUploadNoResidents, {
+        names: [...missing].join(", "),
+      }),
+    };
+  }
+
+  // Re-running the import updates contacts instead of duplicating them: match
+  // by email when the row has one, otherwise by name within the same resident.
+  const residentIds = [...new Set(matched.map((row) => row.residentId))];
+  const existing = await residentSql`
+    SELECT id, resident_id, lower(name) AS name, lower(email) AS email
+    FROM resident_users
+    WHERE resident_id = ANY(${residentIds}::uuid[])
+      AND deleted_at IS NULL
+  `;
+  const byEmail = new Map<string, string>();
+  const byName = new Map<string, string>();
+  for (const row of existing) {
+    const residentId = row.resident_id as string;
+    if (row.email) byEmail.set(`${residentId}|${row.email}`, row.id as string);
+    byName.set(`${residentId}|${row.name}`, row.id as string);
+  }
+
+  let created = 0;
+  let updated = 0;
+  const seen = new Set<string>();
+  const queries: ReturnType<typeof residentSql>[] = [];
+  for (const row of matched) {
+    const email = row.email.toLocaleLowerCase() || null;
+    const nameKey = `${row.residentId}|${row.name.toLocaleLowerCase()}`;
+    const existingId =
+      (email ? byEmail.get(`${row.residentId}|${email}`) : undefined) ??
+      byName.get(nameKey);
+    const dedupeKey = existingId ?? (email ? `${row.residentId}|${email}` : nameKey);
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const role = row.role || null;
+    const phone = row.phone || null;
+    const accessRole = row.role === RESIDENT_ADMIN_ROLE ? "admin" : "member";
+    if (existingId) {
+      updated += 1;
+      queries.push(residentSql`
+        UPDATE resident_users
+        SET name = ${row.name}, email = ${email}, phone = ${phone},
+            role = ${role}, access_role = ${accessRole}
+        WHERE id = ${existingId}
+      `);
+    } else {
+      created += 1;
+      queries.push(residentSql`
+        INSERT INTO resident_users (resident_id, name, email, phone, role, access_role)
+        VALUES (${row.residentId}, ${row.name}, ${email}, ${phone}, ${role}, ${accessRole})
+      `);
+    }
+  }
+
+  try {
+    const chunkSize = 50;
+    for (let index = 0; index < queries.length; index += chunkSize) {
+      await residentSql.transaction(queries.slice(index, index + chunkSize));
+    }
+  } catch (error) {
+    console.error("importResidentUsersAction failed:", error);
+    return { error: dict.superAdmin.residentUsersUploadFailed };
+  }
+
+  revalidatePath("/residents");
+  const success = t(dict.superAdmin.residentUsersUploadSuccess, {
+    create: created,
+    update: updated,
+  });
+  return {
+    success:
+      missing.size > 0
+        ? `${success} · ${t(dict.superAdmin.residentUsersUploadSkipped, {
+            names: [...missing].join(", "),
+          })}`
+        : success,
+    created,
+    updated,
+  };
+}
+
 export async function importUsersAction(
   complexId: string,
   rows: UserImportRow[],
@@ -1011,6 +1158,7 @@ const createUserSchema = z.object({
   email: z.email(),
   phoneNumber: z.string().trim(),
   role: z.enum(["user", "admin"]),
+  password: z.union([z.literal(""), z.string().min(8)]),
 });
 
 export async function createUserAction(
@@ -1026,11 +1174,13 @@ export async function createUserAction(
     email: formData.get("email"),
     phoneNumber: formData.get("phone_number"),
     role: formData.get("role"),
+    password: formData.get("password") ?? "",
   });
   if (!parsed.success) {
     const fieldErrors = parsed.error.flatten().fieldErrors;
     if (fieldErrors.complexId) return { error: dict.admin.complexNotFound };
     if (fieldErrors.email) return { error: dict.errors.invalidEmail };
+    if (fieldErrors.password) return { error: dict.errors.passwordMin };
     return { error: dict.errors.nameRequired };
   }
 
@@ -1051,11 +1201,13 @@ export async function createUserAction(
   if (existing.length > 0) return { error: dict.superAdmin.usersEmailTaken };
 
   const userId = randomUUID();
+  // Optional: without a password the user signs in with a magic link or sets one via forgot password.
+  const passwordHash = parsed.data.password ? await hashPassword(parsed.data.password) : null;
   try {
     await usersSql.transaction([
       usersSql`
-        INSERT INTO users (id, email, full_name, role, phone_number)
-        VALUES (${userId}, ${email}, ${parsed.data.fullName}, 'user', ${phoneNumber})
+        INSERT INTO users (id, email, full_name, role, phone_number, password_hash)
+        VALUES (${userId}, ${email}, ${parsed.data.fullName}, 'user', ${phoneNumber}, ${passwordHash})
       `,
       usersSql`
         INSERT INTO user_complex_permissions (user_id, complex_id, role)
@@ -3175,16 +3327,71 @@ export async function importMissionHistoryAction(
             ${row.status === "closed" ? (row.closedAt ?? row.dueAt) : null}::timestamptz,
             ${row.status === "closed" ? row.resolvedByUserId : null},
             ${row.dueAt}::timestamptz,
-            COALESCE(${row.closedAt}::timestamptz, now()),
+            COALESCE(${row.closedAt}::timestamptz, ${row.startAt ?? null}::timestamptz, now()),
             now()
           )
         `);
       }
 
-      queries.push(sql`
-        DELETE FROM task_checklists
-        WHERE task_id = ${missionId}
-      `);
+      const isOpenRow = row.status !== "closed";
+      if (isOpenRow) {
+        queries.push(sql`
+          DELETE FROM task_assignees
+          WHERE task_id = ${missionId}
+        `);
+        if (row.assignedUserId) {
+          queries.push(sql`
+            INSERT INTO task_assignees (task_id, user_id)
+            VALUES (${missionId}, ${row.assignedUserId})
+          `);
+        }
+      }
+
+      // Open-missions exports carry no checks: a new open mission gets its
+      // scheduled mission's checklists, unanswered, and one that already
+      // exists keeps whatever progress was made on it.
+      const keepsTemplateChecklists = isOpenRow && row.checklistItems.length === 0;
+      if (keepsTemplateChecklists) {
+        if (row.classification === "create" && row.templateTaskId) {
+          queries.push(sql`
+            WITH source AS (
+              SELECT id AS source_id, gen_random_uuid() AS id, title, sort_order
+              FROM task_checklists
+              WHERE task_id = ${row.templateTaskId}
+            ),
+            inserted_checklists AS (
+              INSERT INTO task_checklists (id, task_id, title, sort_order)
+              SELECT id, ${missionId}, title, sort_order FROM source
+              RETURNING id
+            ),
+            inserted_locations AS (
+              INSERT INTO checklist_locations (
+                task_checklist_id, building_id, floor_id, area_id
+              )
+              SELECT source.id, cl.building_id, cl.floor_id, cl.area_id
+              FROM checklist_locations cl
+              INNER JOIN source ON source.source_id = cl.task_checklist_id
+              RETURNING task_checklist_id
+            )
+            INSERT INTO task_checklist_items (
+              id, task_checklist_id, label, sort_order, item_type,
+              field_type_original, is_required, number_unit, number_rule,
+              number_min, number_max, options
+            )
+            SELECT
+              gen_random_uuid(), source.id, item.label, item.sort_order, item.item_type,
+              item.field_type_original, item.is_required, item.number_unit, item.number_rule,
+              item.number_min, item.number_max, item.options
+            FROM task_checklist_items item
+            INNER JOIN source ON source.source_id = item.task_checklist_id
+          `);
+        }
+      } else {
+        queries.push(sql`
+          DELETE FROM task_checklists
+          WHERE task_id = ${missionId}
+        `);
+      }
 
       for (const [checklistIndex, checklist] of row.checklistGroups.entries()) {
         const { title: checklistTitle, items } = checklist;

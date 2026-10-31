@@ -65,8 +65,14 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
           SELECT 1 FROM tasks t
           JOIN buildings b ON b.id = t.building_id
           WHERE b.complex_id = ${complexId} AND t.type = 'mission'
-            AND t.external_id IS NOT NULL
+            AND t.external_id IS NOT NULL AND t.status = 'closed'
         ) AS mission_history,
+        EXISTS (
+          SELECT 1 FROM tasks t
+          JOIN buildings b ON b.id = t.building_id
+          WHERE b.complex_id = ${complexId} AND t.type = 'mission'
+            AND t.external_id IS NOT NULL AND t.status <> 'closed'
+        ) AS open_missions,
         EXISTS (
           SELECT 1 FROM tasks t
           JOIN buildings b ON b.id = t.building_id
@@ -80,7 +86,14 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
     residentSql`
       SELECT EXISTS (
         SELECT 1 FROM residents WHERE complex_id = ${complexId}
-      ) AS residents
+      ) AS residents,
+      EXISTS (
+        SELECT 1 FROM resident_users ru
+        JOIN residents r ON r.id = ru.resident_id
+        WHERE r.complex_id = ${complexId}
+          AND r.deleted_at IS NULL
+          AND ru.deleted_at IS NULL
+      ) AS resident_users
     `,
     usersSql`
       SELECT EXISTS (
@@ -93,7 +106,7 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
   ]);
 
   const main = mainRows[0] as Record<string, boolean> | undefined;
-  const resident = residentRows[0] as { residents: boolean } | undefined;
+  const resident = residentRows[0] as { residents: boolean; resident_users: boolean } | undefined;
   const user = userRows[0] as { users: boolean } | undefined;
 
   return {
@@ -105,8 +118,10 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
     files: Boolean(main?.files),
     fileAttachments: Boolean(main?.file_attachments),
     residents: Boolean(resident?.residents),
+    residentUsers: Boolean(resident?.resident_users),
     scheduledMissions: Boolean(main?.scheduled_missions),
     missionHistory: Boolean(main?.mission_history),
+    openMissions: Boolean(main?.open_missions),
     users: Boolean(user?.users),
     tasks: Boolean(main?.tasks),
     automations: Boolean(main?.automations),

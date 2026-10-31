@@ -11,8 +11,10 @@ export const UPLOAD_STATUS_KEYS = [
   "files",
   "fileAttachments",
   "residents",
+  "residentUsers",
   "scheduledMissions",
   "missionHistory",
+  "openMissions",
   "users",
   "tasks",
   "automations",
@@ -35,7 +37,7 @@ export const SECTION_UPLOAD_KEYS: Record<string, UploadStatusKey[]> = {
   "super-admin": ["categories", "tasks", "automations"],
   "scheduled-missions": ["scheduledMissions", "missionHistory"],
   documents: ["fileTags", "files", "fileAttachments"],
-  residents: ["residents"],
+  residents: ["residents", "residentUsers"],
   users: ["users"],
 };
 

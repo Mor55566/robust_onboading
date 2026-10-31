@@ -29,7 +29,10 @@ import {
 import {
   buildMissionHistoryCsvTemplate,
   buildMissionHistoryExcelTemplate,
+  buildOpenMissionsCsvTemplate,
+  buildOpenMissionsExcelTemplate,
   parseMissionHistoryImportContent,
+  parseOpenMissionsImportContent,
   type MissionHistoryImportRow,
   type ResolvedMissionHistoryImportRow,
 } from "@/lib/mission-history-import";
@@ -50,6 +53,11 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
   } | null>(null);
   const [historyUploadOpen, setHistoryUploadOpen] = useState(false);
   const [historyMessage, setHistoryMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [openUploadOpen, setOpenUploadOpen] = useState(false);
+  const [openMessage, setOpenMessage] = useState<{
     type: "success" | "error";
     text: string;
   } | null>(null);
@@ -98,8 +106,11 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     return checkBuildingNames(rows.flatMap((row) => row.buildingsRaw));
   }
 
+  // Shared by the history and open-missions uploads: both are mission
+  // occurrences imported through the same server actions.
   async function previewHistoryRows(
     rows: MissionHistoryImportRow[],
+    kind: "history" | "open" = "history",
   ): Promise<ImportPreviewRow[] | { error: string }> {
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     const issues = checkMissionHistoryRows(rows);
@@ -141,16 +152,22 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
                 title: row.title,
               })
           : [
-              row.status === "closed"
-                ? dict.superAdmin.missionHistoryStatusDone
-                : dict.superAdmin.missionHistoryStatusNotDone,
+              kind === "open"
+                ? dict.superAdmin.openMissionsStatusOpen
+                : row.status === "closed"
+                  ? dict.superAdmin.missionHistoryStatusDone
+                  : dict.superAdmin.missionHistoryStatusNotDone,
+              kind === "open" ? row.assignedUserRaw || null : null,
               checkCount > 0
                 ? `${checkCount} ${dict.superAdmin.missionHistoryChecksLabel}`
                 : null,
               row.classification === "create" && row.unmatchedTemplate
-                ? t(dict.superAdmin.missionHistoryUnmatchedTitle, {
-                    title: row.title,
-                  })
+                ? t(
+                    kind === "open"
+                      ? dict.superAdmin.openMissionsUnmatchedTitle
+                      : dict.superAdmin.missionHistoryUnmatchedTitle,
+                    { title: row.title },
+                  )
                 : null,
             ]
               .filter(Boolean)
@@ -170,8 +187,9 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
       percent: number,
       counts?: { done: number; total: number },
     ) => void,
+    setResultMessage: typeof setHistoryMessage = setHistoryMessage,
   ) {
-    setHistoryMessage(null);
+    setResultMessage(null);
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     const issues = checkMissionHistoryRows(rows);
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
@@ -215,7 +233,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
       return { failures, succeeded: created + updated };
     }
 
-    setHistoryMessage({
+    setResultMessage({
       type: "success",
       text: t(dict.superAdmin.missionHistoryUploadSuccess, {
         created,
@@ -339,9 +357,67 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
           }
           return parsed;
         }}
-        previewAsync={previewHistoryRows}
+        previewAsync={(rows) => previewHistoryRows(rows)}
         onClose={() => setHistoryUploadOpen(false)}
-        onImport={handleHistoryImport}
+        onImport={(rows, reportProgress) =>
+          handleHistoryImport(rows, reportProgress)
+        }
+      />
+
+      <UploadMessage message={openMessage} />
+
+      <UploadCard
+        title={dict.superAdmin.openMissionsUploadTitle}
+        subtitle={dict.superAdmin.openMissionsUploadSubtitle}
+        buttonLabel={dict.superAdmin.openMissionsUploadButton}
+        onOpen={() => setOpenUploadOpen(true)}
+        disabled={!complexId}
+        done={complexId ? uploadStatus?.openMissions : undefined}
+      />
+
+      <DataUploadModal
+        open={openUploadOpen}
+        dict={dict}
+        copy={{
+          title: dict.superAdmin.openMissionsUploadTitle,
+          subtitle: dict.superAdmin.openMissionsUploadSubtitle,
+          empty: dict.superAdmin.openMissionsUploadEmpty,
+          invalid: dict.superAdmin.missionHistoryUploadInvalid,
+          invalidRow: dict.superAdmin.openMissionsUploadInvalidRow,
+          missingDescription: dict.superAdmin.openMissionsUploadMissingRequired,
+        }}
+        csvFilename="open-missions-template.csv"
+        excelFilename="open-missions-template.xls"
+        buildCsv={buildOpenMissionsCsvTemplate}
+        buildExcel={buildOpenMissionsExcelTemplate}
+        parse={(content, fileName) => {
+          const parsed = parseOpenMissionsImportContent(content, fileName);
+          if (
+            "error" in parsed &&
+            parsed.message === "__missing_required__"
+          ) {
+            return {
+              error: parsed.error,
+              message: dict.superAdmin.openMissionsUploadMissingRequired,
+            };
+          }
+          if ("error" in parsed && parsed.message?.startsWith("__row__:")) {
+            const row = parsed.message.slice("__row__:".length);
+            return {
+              error: parsed.error,
+              message: t(dict.superAdmin.uploadRowError, {
+                row,
+                message: dict.superAdmin.openMissionsUploadInvalidRow,
+              }),
+            };
+          }
+          return parsed;
+        }}
+        previewAsync={(rows) => previewHistoryRows(rows, "open")}
+        onClose={() => setOpenUploadOpen(false)}
+        onImport={(rows, reportProgress) =>
+          handleHistoryImport(rows, reportProgress, setOpenMessage)
+        }
       />
     </div>
   );

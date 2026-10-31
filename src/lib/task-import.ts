@@ -410,16 +410,19 @@ export function parseImportDate(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
 
+  // Visitt exports day-first dates: "DD-MM-YYYY HH:mm:ss", or "D/M/YY" in
+  // some reports (e.g. open missions).
   const visitt = trimmed.match(
-    /^(\d{1,2})-(\d{1,2})-(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
+    /^(\d{1,2})([-/])(\d{1,2})\2(\d{4}|\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/,
   );
   if (visitt) {
     const day = Number(visitt[1]);
-    const month = Number(visitt[2]);
-    const year = Number(visitt[3]);
-    const hour = Number(visitt[4] ?? 0);
-    const minute = Number(visitt[5] ?? 0);
-    const second = Number(visitt[6] ?? 0);
+    const month = Number(visitt[3]);
+    const year =
+      visitt[4]!.length === 2 ? 2000 + Number(visitt[4]) : Number(visitt[4]);
+    const hour = Number(visitt[5] ?? 0);
+    const minute = Number(visitt[6] ?? 0);
+    const second = Number(visitt[7] ?? 0);
     if (
       month < 1 ||
       month > 12 ||
