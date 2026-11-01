@@ -76,6 +76,7 @@ export type MissionImportChecklistItem = {
   label: string;
   itemType: "checklist" | "text" | "number" | "options" | "signature";
   fieldTypeOriginal: string;
+  isRequired: boolean;
   numberUnit: string | null;
   numberRule: "any" | "between" | "less_than" | "greater_than" | null;
   numberMin: number | null;
@@ -111,6 +112,7 @@ function checklistItemIdentity(item: MissionImportChecklistItem): string {
     label: item.label,
     itemType: item.itemType,
     fieldTypeOriginal: item.fieldTypeOriginal,
+    isRequired: item.isRequired,
     numberUnit: item.numberUnit,
     numberRule: item.numberRule,
     numberMin: item.numberMin,
@@ -618,6 +620,7 @@ export function parseMissionsImportContent(
   const numberMinIndex = findHeaderIndex(header, ["number_min", "number min"]);
   const numberMaxIndex = findHeaderIndex(header, ["number_max", "number max"]);
   const optionsIndex = findHeaderIndex(header, ["options"]);
+  const requiredIndex = findHeaderIndex(header, ["is_required", "required", "חובה"]);
 
   if ((externalIdIndex < 0 && sourceIndexIndex < 0) || titleIndex < 0) {
     return { error: "invalid", message: "__missing_required__" };
@@ -675,6 +678,12 @@ export function parseMissionsImportContent(
       else if (["text", "textarea", "טקסט"].includes(rawFieldType)) itemType = "text";
       else if (["signature", "חתימה"].includes(rawFieldType)) itemType = "signature";
 
+      const requiredValue = requiredIndex >= 0 ? (cells[requiredIndex] ?? "").trim().toLowerCase() : "";
+      const isRequired = ["yes", "true", "1", "כן", "חובה"].includes(requiredValue);
+      if (!isRequired && !["", "no", "false", "0", "לא"].includes(requiredValue)) {
+        return { error: "invalidRow", message: `__row__:${rowNumber}` };
+      }
+
       let parsedOptions: string[] = [];
       if (optionsIndex >= 0) {
         try {
@@ -713,6 +722,7 @@ export function parseMissionsImportContent(
         label: (cells[checklistNameIndex] ?? "").trim(),
         itemType,
         fieldTypeOriginal,
+        isRequired,
         numberUnit: itemType === "number" && unitIndex >= 0 ? (cells[unitIndex] ?? "").trim() || null : null,
         numberRule,
         numberMin: numberRule === "between" || numberRule === "greater_than" ? numberMin : null,

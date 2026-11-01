@@ -2854,7 +2854,7 @@ export async function importScheduledMissionsAction(
             )
             SELECT
               x.id, ${checklistId}, x.label, x.sort_order, x.item_type,
-              x.field_type_original, false, x.number_unit, x.number_rule,
+              x.field_type_original, x.is_required, x.number_unit, x.number_rule,
               x.number_min, x.number_max, x.options::jsonb
             FROM unnest(
               ${itemIds}::uuid[],
@@ -2862,6 +2862,7 @@ export async function importScheduledMissionsAction(
               ${items.map((item) => item.sortOrder)}::int[],
               ${items.map((item) => item.itemType)}::text[],
               ${items.map((item) => item.fieldTypeOriginal)}::text[],
+              ${items.map((item) => item.isRequired)}::boolean[],
               ${items.map((item) => item.numberUnit)}::text[],
               ${items.map((item) => item.numberRule)}::text[],
               ${items.map((item) => item.numberMin)}::numeric[],
@@ -2869,7 +2870,7 @@ export async function importScheduledMissionsAction(
               ${items.map((item) => JSON.stringify(item.options))}::text[]
             ) AS x(
               id, label, sort_order, item_type, field_type_original,
-              number_unit, number_rule, number_min, number_max, options
+              is_required, number_unit, number_rule, number_min, number_max, options
             )
           `);
         }

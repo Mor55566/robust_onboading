@@ -543,6 +543,11 @@
           checklist_name: clean(
             item.querySelector('.item-name-readonly')?.textContent
           ),
+          // Visitt marks mandatory questions with a red asterisk; optional
+          // ones keep the indicator element but hide it.
+          is_required: Boolean(
+            item.querySelector('.required-indicator:not(.hidden)')
+          ),
           field_type: type,
           field_type_original: rawType,
           unit: numberDefinition.unit,
@@ -724,6 +729,7 @@
       'checklist_title',
       'checklist_order',
       'checklist_name',
+      'is_required',
       'field_type',
       'field_type_original',
       'unit',
@@ -734,7 +740,7 @@
       'options',
     ];
 
-    const booleanColumns = new Set(['skip_on_holidays', 'is_paused']);
+    const booleanColumns = new Set(['skip_on_holidays', 'is_paused', 'is_required']);
 
     const csv = [
       columns.map(csvCell).join(','),
