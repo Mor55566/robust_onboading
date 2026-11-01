@@ -127,6 +127,8 @@ export const en = {
     floorsUploadBuildingLabel: "Building",
     floorsUploadBuildingPlaceholder: "Select a building",
     floorsUploadBuildingRequired: "Choose a building before uploading floors.",
+    uploadBuildingLabel: "Building",
+    uploadBuildingFromFile: "From file (building column)",
     floorLevel: "Level",
     floorExternalId: "ID",
     areasUploadTitle: "Upload areas",

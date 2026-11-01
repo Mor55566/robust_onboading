@@ -129,6 +129,8 @@ export const he: Dictionary = {
     floorsUploadBuildingLabel: "בניין",
     floorsUploadBuildingPlaceholder: "בחרו בניין",
     floorsUploadBuildingRequired: "יש לבחור בניין לפני העלאת קומות.",
+    uploadBuildingLabel: "בניין",
+    uploadBuildingFromFile: "לפי הקובץ (עמודת בניין)",
     floorLevel: "מפלס",
     floorExternalId: "מזהה",
     areasUploadTitle: "העלאת אתרים",

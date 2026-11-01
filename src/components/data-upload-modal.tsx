@@ -66,6 +66,7 @@ export function DataUploadModal<T>({
   hideSkippedRows = false,
   extraFields,
   canImport = true,
+  previewKey,
   onClose,
   onImport,
 }: {
@@ -91,6 +92,8 @@ export function DataUploadModal<T>({
   extraFields?: ReactNode;
   /** When false, blocks import even once a valid file is parsed (e.g. a required field in extraFields isn't set). */
   canImport?: boolean;
+  /** When this changes after a file was parsed, the preview is re-run (e.g. an extraFields picker changed). */
+  previewKey?: string;
   onClose: () => void;
   onImport: (
     rows: T[],
@@ -139,6 +142,36 @@ export function DataUploadModal<T>({
       document.body.style.overflow = previousOverflow;
     };
   }, [open, onClose, showErrorRows]);
+
+  const lastPreviewKeyRef = useRef(previewKey);
+  useEffect(() => {
+    if (lastPreviewKeyRef.current === previewKey) return;
+    lastPreviewKeyRef.current = previewKey;
+    if (!parsedRows || !previewAsync) return;
+    let cancelled = false;
+    async function refreshPreview(rows: T[], run: NonNullable<typeof previewAsync>) {
+      await Promise.resolve();
+      if (cancelled) return;
+      setError(null);
+      setPreviewRows(null);
+      setIsReading(true);
+      try {
+        const previewResult = await run(rows);
+        if (cancelled) return;
+        if ("error" in previewResult) setError(previewResult.error);
+        else setPreviewRows(previewResult);
+      } catch (error) {
+        console.error("DataUploadModal: failed to refresh preview", error);
+        if (!cancelled) setError(copy.invalid);
+      } finally {
+        if (!cancelled) setIsReading(false);
+      }
+    }
+    void refreshPreview(parsedRows, previewAsync);
+    return () => {
+      cancelled = true;
+    };
+  }, [previewKey, parsedRows, previewAsync, copy.invalid]);
 
   useEffect(() => {
     if (open) return;

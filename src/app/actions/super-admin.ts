@@ -230,6 +230,8 @@ export async function importAutomationsAction(
 export async function importAreasForSuperAdminAction(
   complexId: string,
   rows: AreaImportRow[],
+  /** When set, every row goes to this building and the CSV's building column is ignored. */
+  buildingId?: string | null,
 ): Promise<{
   error?: string;
   created?: number;
@@ -257,6 +259,11 @@ export async function importAreasForSuperAdminAction(
     byName.set(key, [...(byName.get(key) ?? []), building]);
   }
 
+  const forcedBuilding = buildingId
+    ? buildings.find((building) => building.id === buildingId)
+    : undefined;
+  if (buildingId && !forcedBuilding) return { error: dict.admin.buildingNotFound };
+
   const explicitNames = new Set(
     rows.map((row) => row.building?.trim()).filter((name): name is string => Boolean(name)),
   );
@@ -265,7 +272,9 @@ export async function importAreasForSuperAdminAction(
   let skipped = 0;
 
   for (const row of rows) {
-    const matches = buildingsForAreaRow(row, inferredName, byName, buildings);
+    const matches = forcedBuilding
+      ? [forcedBuilding]
+      : buildingsForAreaRow(row, inferredName, byName, buildings);
     if (matches.length !== 1) {
       // Already surfaced (and confirmed by the user) as a red row in the
       // preview step — skip it here rather than aborting the whole import.
@@ -295,6 +304,8 @@ export async function importAreasForSuperAdminAction(
 export async function previewAreasForSuperAdminAction(
   complexId: string,
   rows: AreaImportRow[],
+  /** When set, every row goes to this building and the CSV's building column is ignored. */
+  buildingId?: string | null,
 ): Promise<{
   error?: string;
   rows?: Array<{
@@ -334,6 +345,11 @@ export async function previewAreasForSuperAdminAction(
     byName.set(key, [...(byName.get(key) ?? []), building]);
   }
 
+  const forcedBuilding = buildingId
+    ? buildings.find((building) => building.id === buildingId)
+    : undefined;
+  if (buildingId && !forcedBuilding) return { error: dict.admin.buildingNotFound };
+
   const explicitNames = new Set(
     rows.map((row) => row.building?.trim()).filter((name): name is string => Boolean(name)),
   );
@@ -348,7 +364,9 @@ export async function previewAreasForSuperAdminAction(
 
   for (const row of rows) {
     const buildingName = row.building?.trim() || inferredName;
-    const matches = buildingsForAreaRow(row, inferredName, byName, buildings);
+    const matches = forcedBuilding
+      ? [forcedBuilding]
+      : buildingsForAreaRow(row, inferredName, byName, buildings);
     if (matches.length !== 1) {
       previewRows.push({
         key: `area-building-error-${row.rowNumber}`,

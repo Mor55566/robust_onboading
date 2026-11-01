@@ -129,6 +129,8 @@ export const ru: Dictionary = {
     floorsUploadBuildingLabel: "Здание",
     floorsUploadBuildingPlaceholder: "Выберите здание",
     floorsUploadBuildingRequired: "Выберите здание перед загрузкой этажей.",
+    uploadBuildingLabel: "Здание",
+    uploadBuildingFromFile: "Из файла (столбец здания)",
     floorLevel: "Уровень",
     floorExternalId: "ID",
     areasUploadTitle: "Загрузка зон",

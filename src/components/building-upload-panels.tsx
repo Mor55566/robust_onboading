@@ -58,6 +58,9 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
   } | null>(null);
   const [buildings, setBuildings] = useState<BuildingWithUploadCounts[]>([]);
   const [floorsBuildingId, setFloorsBuildingId] = useState("");
+  // "" = take the building from the file's building column.
+  const [areasBuildingId, setAreasBuildingId] = useState("");
+  const [equipmentBuildingId, setEquipmentBuildingId] = useState("");
   const floorsAllDone =
     buildings.length > 0 && buildings.every((building) => building.floorCount > 0);
   const areasAllDone =
@@ -67,6 +70,8 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
 
   useEffect(() => {
     setFloorsBuildingId("");
+    setAreasBuildingId("");
+    setEquipmentBuildingId("");
     if (!complexId) {
       setBuildings([]);
       return;
@@ -123,9 +128,15 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
 
   async function previewAreaRows(rows: AreaImportRow[]) {
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
-    const issues = checkBuildingNames(rows.map((row) => row.building || row.location));
-    if (issues.length > 0) return { error: formatGuardBlockError(issues) };
-    const result = await previewAreasForSuperAdminAction(complexId, rows);
+    if (!areasBuildingId) {
+      const issues = checkBuildingNames(rows.map((row) => row.building || row.location));
+      if (issues.length > 0) return { error: formatGuardBlockError(issues) };
+    }
+    const result = await previewAreasForSuperAdminAction(
+      complexId,
+      rows,
+      areasBuildingId || null,
+    );
     if (result.error || !result.rows) {
       return { error: result.error ?? dict.superAdmin.areasUploadInvalid };
     }
@@ -138,10 +149,16 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
   ) {
     setMessage(null);
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
-    const issues = checkBuildingNames(rows.map((row) => row.building || row.location));
-    if (issues.length > 0) return { error: formatGuardBlockError(issues) };
+    if (!areasBuildingId) {
+      const issues = checkBuildingNames(rows.map((row) => row.building || row.location));
+      if (issues.length > 0) return { error: formatGuardBlockError(issues) };
+    }
     reportProgress(10);
-    const result = await importAreasForSuperAdminAction(complexId, rows);
+    const result = await importAreasForSuperAdminAction(
+      complexId,
+      rows,
+      areasBuildingId || null,
+    );
     if (result.error) return { error: result.error };
     reportProgress(100);
     setMessage({
@@ -155,17 +172,26 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
     void refreshBuildings();
   }
 
+  // A picked building wins over the file: drop the building column so every
+  // row falls back to it.
+  function equipmentRowsForImport(rows: EquipmentImportRow[]) {
+    if (!equipmentBuildingId) return rows;
+    return rows.map((row) => ({ ...row, building: undefined }));
+  }
+
   async function previewEquipmentRows(
     rows: EquipmentImportRow[],
   ): Promise<ImportPreviewRow[] | { error: string }> {
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
-    const issues = checkBuildingNames(rows.map((row) => row.building));
-    if (issues.length > 0) return { error: formatGuardBlockError(issues) };
-    const result = await importEquipmentAction(null, rows, {
-      externalIdOnly: true,
-      complexId,
-      previewOnly: true,
-    });
+    if (!equipmentBuildingId) {
+      const issues = checkBuildingNames(rows.map((row) => row.building));
+      if (issues.length > 0) return { error: formatGuardBlockError(issues) };
+    }
+    const result = await importEquipmentAction(
+      equipmentBuildingId || null,
+      equipmentRowsForImport(rows),
+      { externalIdOnly: true, complexId, previewOnly: true },
+    );
     if (result.error || !result.preview) {
       return { error: result.error ?? dict.superAdmin.equipmentUploadInvalid };
     }
@@ -178,13 +204,16 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
   ) {
     setMessage(null);
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
-    const issues = checkBuildingNames(rows.map((row) => row.building));
-    if (issues.length > 0) return { error: formatGuardBlockError(issues) };
+    if (!equipmentBuildingId) {
+      const issues = checkBuildingNames(rows.map((row) => row.building));
+      if (issues.length > 0) return { error: formatGuardBlockError(issues) };
+    }
     reportProgress(10);
-    const result = await importEquipmentAction(null, rows, {
-      externalIdOnly: true,
-      complexId,
-    });
+    const result = await importEquipmentAction(
+      equipmentBuildingId || null,
+      equipmentRowsForImport(rows),
+      { externalIdOnly: true, complexId },
+    );
     if (result.error) return { error: result.error };
     reportProgress(100);
     setMessage({
@@ -344,7 +373,17 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
         buildCsv={buildAreasCsvTemplate}
         buildExcel={buildAreasExcelTemplate}
         previewAsync={previewAreaRows}
+        previewKey={areasBuildingId}
         hideSkippedRows
+        extraFields={
+          <BuildingPicker
+            id="areas-upload-building"
+            dict={dict}
+            buildings={buildings}
+            value={areasBuildingId}
+            onChange={setAreasBuildingId}
+          />
+        }
         onClose={() => setAreasUploadOpen(false)}
         onImport={handleAreasImport}
       />
@@ -364,7 +403,17 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
         buildExcel={buildEquipmentExcelTemplate}
         parse={parseEquipmentImportContent}
         previewAsync={previewEquipmentRows}
+        previewKey={equipmentBuildingId}
         hideSkippedRows
+        extraFields={
+          <BuildingPicker
+            id="equipment-upload-building"
+            dict={dict}
+            buildings={buildings}
+            value={equipmentBuildingId}
+            onChange={setEquipmentBuildingId}
+          />
+        }
         onClose={() => setEquipmentUploadOpen(false)}
         onImport={handleEquipmentImport}
       />
@@ -382,6 +431,37 @@ export function BuildingUploadPanels({ dict }: { dict: Dictionary }) {
           void refreshBuildings();
         }}
       />
+    </div>
+  );
+}
+
+/** Building override for uploads; "" means take the building from the file. */
+function BuildingPicker({
+  id,
+  dict,
+  buildings,
+  value,
+  onChange,
+}: {
+  id: string;
+  dict: Dictionary;
+  buildings: BuildingWithUploadCounts[];
+  value: string;
+  onChange: (buildingId: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <label htmlFor={id} className="field-label">
+        {dict.superAdmin.uploadBuildingLabel}
+      </label>
+      <select id={id} value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{dict.superAdmin.uploadBuildingFromFile}</option>
+        {buildings.map((building) => (
+          <option key={building.id} value={building.id}>
+            {building.name}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
