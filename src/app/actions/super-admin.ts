@@ -2416,6 +2416,7 @@ export async function importCategoriesAction(
 export async function importScheduledMissionsAction(
   complexId: string,
   rows: MissionImportRow[],
+  options: { pauseAll?: boolean } = {},
 ): Promise<{
   error?: string;
   success?: string;
@@ -2428,6 +2429,10 @@ export async function importScheduledMissionsAction(
   }
   if (!Array.isArray(rows) || rows.length === 0) {
     return { error: dict.superAdmin.scheduledMissionsUploadEmpty };
+  }
+  // "Pause all" overrides whatever paused state the file carries.
+  if (options.pauseAll) {
+    rows = rows.map((row) => ({ ...row, isPaused: true }));
   }
   const scopedComplexId = await resolveImportComplexId(complexId);
   if (!scopedComplexId) return { error: dict.admin.complexNotFound };

@@ -188,6 +188,9 @@ export const he: Dictionary = {
     scheduledMissionsSubtitle:
       "העלאת משימות מתוזמנות מקובץ CSV או Excel",
     scheduledMissionsUploadTitle: "העלאת משימות מתוזמנות",
+    scheduledMissionsUploadPauseAll: "השהה את כל המשימות שמועלות",
+    scheduledMissionsUploadPauseAllHint:
+      "כשהאפשרות כבויה, כל משימה תקבל את מצב ההשהיה שמופיע בקובץ.",
     scheduledMissionsUploadSubtitle:
       "הורידו את התבנית, מלאו את המשימות המתוזמנות, והעלו. מזהה נשמר כמזהה חיצוני. מיקומים נפתרים כמו בשאר הייבואים. עמודת בדיקות ושדות שאין להם עמודה במסד הנתונים מתעלמים מהם.",
     externalIdInUse:

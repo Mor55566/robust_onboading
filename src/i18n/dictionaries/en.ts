@@ -186,6 +186,9 @@ export const en = {
     scheduledMissionsSubtitle:
       "Upload scheduled missions from a CSV or Excel template",
     scheduledMissionsUploadTitle: "Upload scheduled missions",
+    scheduledMissionsUploadPauseAll: "Pause all uploaded missions",
+    scheduledMissionsUploadPauseAllHint:
+      "When off, each mission keeps the paused state from the file.",
     scheduledMissionsUploadSubtitle:
       "Download the template, fill in your scheduled missions, then upload. מזהה is saved as external id. Locations (מיקומים) are resolved like other imports. The בדיקות column and fields without a database column are ignored.",
     externalIdInUse:

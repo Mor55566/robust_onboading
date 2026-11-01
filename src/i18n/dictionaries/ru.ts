@@ -188,6 +188,9 @@ export const ru: Dictionary = {
     scheduledMissionsSubtitle:
       "Загрузка запланированных задач из шаблона CSV или Excel",
     scheduledMissionsUploadTitle: "Загрузка запланированных задач",
+    scheduledMissionsUploadPauseAll: "Приостановить все загружаемые задачи",
+    scheduledMissionsUploadPauseAllHint:
+      "Если выключено, каждая задача сохраняет состояние паузы из файла.",
     scheduledMissionsUploadSubtitle:
       "Скачайте шаблон, заполните запланированные задачи и загрузите. מזהה сохраняется как внешний id. Местоположения (מיקומים) разрешаются так же, как при других импортах. Столбец בדיקות и поля без столбца в базе данных игнорируются.",
     externalIdInUse:

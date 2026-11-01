@@ -47,6 +47,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
   } = useComplexContext();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [pauseAll, setPauseAll] = useState(true);
   const [message, setMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -84,7 +85,9 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     const issues = checkBuildingNames(rows.flatMap((row) => row.buildings));
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
-    const result = await importScheduledMissionsAction(complexId, rows);
+    const result = await importScheduledMissionsAction(complexId, rows, {
+      pauseAll,
+    });
     if (result.error) {
       return { error: result.error };
     }
@@ -270,6 +273,24 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
           missingDescription:
             dict.superAdmin.scheduledMissionsUploadMissingRequired,
         }}
+        extraFields={
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border bg-[var(--surface)] px-4 py-3 hover:bg-[var(--surface-muted)]">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded"
+              checked={pauseAll}
+              onChange={(event) => setPauseAll(event.target.checked)}
+            />
+            <span className="space-y-0.5">
+              <span className="block text-sm font-medium">
+                {dict.superAdmin.scheduledMissionsUploadPauseAll}
+              </span>
+              <span className="block text-xs text-[var(--text-muted)]">
+                {dict.superAdmin.scheduledMissionsUploadPauseAllHint}
+              </span>
+            </span>
+          </label>
+        }
         csvFilename="scheduled-missions-template.csv"
         excelFilename="scheduled-missions-template.xls"
         buildCsv={buildMissionsCsvTemplate}
