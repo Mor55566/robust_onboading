@@ -26,6 +26,8 @@ export type ImportPreviewRow = {
   detail?: string;
   /** "error" = won't be uploaded due to a problem (e.g. an unresolved floor) — always shown, highlighted red. */
   action: "create" | "update" | "skip" | "error";
+  /** Problems that don't stop the row from uploading (e.g. a user that won't be assigned) — shown in red. */
+  warnings?: string[];
 };
 
 export type ImportProgressCounts = {
@@ -478,6 +480,15 @@ export function DataUploadModal<T>({
                             {row.detail}
                           </p>
                         ) : null}
+                        {row.warnings?.map((warning) => (
+                          <p
+                            key={warning}
+                            className="mt-1 rounded-md px-2 py-1 text-xs font-medium"
+                            style={{ background: "var(--danger-soft)", color: "var(--danger)" }}
+                          >
+                            {warning}
+                          </p>
+                        ))}
                       </div>
                       <span
                         className="shrink-0 rounded-md px-2 py-0.5 text-xs font-medium"

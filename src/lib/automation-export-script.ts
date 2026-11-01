@@ -4,6 +4,9 @@ export const AUTOMATION_EXPORT_SCRIPT = `/**
  * Usage: paste this entire file into the source site's browser DevTools
  * console and press Enter. The export starts immediately.
  *
+ * Exported actions: assigned users, notified users, and call handling time
+ * (number + unit, e.g. "3 ימים", written to action_preview).
+ *
  * The exporter only clicks an automation row, a multi-select trigger that has
  * hidden +N values, and the modal's exact close button. It never clicks an
  * option, clear, delete, confirm, save, or submit control.
@@ -95,7 +98,27 @@ export const AUTOMATION_EXPORT_SCRIPT = `/**
     };
   }
 
+  // Number + unit fields (e.g. "בחר זמן לטיפול": 3 ימים) are read directly; no click.
+  function numberWithUnit(row) {
+    const numberInput = row.querySelector("input[type='number']");
+    if (!numberInput) return "";
+    const unit = clean(
+      row.querySelector("[data-test-id='unit-select'] .react-select__single-value")?.textContent,
+    );
+    return clean(\`\${numberInput.value} \${unit}\`);
+  }
+
+  function hasMultiSelectTrigger(row) {
+    return Boolean(row.querySelector(
+      ".SelectCombobox > button.SelectComboboxValue .OptionsDisplay, " +
+      ".SelectCombobox > button.SelectComboboxValue .button-as-input-trigger",
+    ));
+  }
+
   function visibleValues(row) {
+    const numeric = numberWithUnit(row);
+    if (numeric) return [numeric];
+
     const exactBadgeValues = [...row.querySelectorAll(
       ".OptionsDisplay .scrollable-options > .item-badge > span:first-child",
     )].map((span) => clean(span.textContent)).filter((value) => value && !isPlaceholder(value));
@@ -242,14 +265,19 @@ export const AUTOMATION_EXPORT_SCRIPT = `/**
       fields[label] = (await readAllSelectedValues(row)).join(" | ");
     }
 
-    const usersLabel = modal.querySelector("label[for='actionValue']");
-    const usersRow = usersLabel?.closest(CONFIG.formRowSelector);
-    if (usersRow) {
-      const users = await readAllSelectedValues(usersRow, true);
-      if (!users.length) {
-        throw new Error("שדה המשתמשים נמצא במודל אך לא נמצאו בו משתמשים מסומנים.");
+    const actionValueLabel = modal.querySelector("label[for='actionValue']");
+    const actionValueRow = actionValueLabel?.closest(CONFIG.formRowSelector);
+    if (actionValueRow) {
+      const numeric = numberWithUnit(actionValueRow);
+      if (numeric) {
+        fields["זמן לטיפול"] = numeric;
+      } else if (hasMultiSelectTrigger(actionValueRow)) {
+        const users = await readAllSelectedValues(actionValueRow, true);
+        if (!users.length) {
+          throw new Error("שדה המשתמשים נמצא במודל אך לא נמצאו בו משתמשים מסומנים.");
+        }
+        fields["משתמשים"] = users.join(" | ");
       }
-      fields["משתמשים"] = users.join(" | ");
     }
 
     const ruleParts = [
@@ -262,6 +290,7 @@ export const AUTOMATION_EXPORT_SCRIPT = `/**
     ].filter((value) => value && !/^כל\\s/.test(value));
     const actionValue =
       fields["משתמשים"] ||
+      fields["זמן לטיפול"] ||
       fields["דחיפות"] ||
       fields["עדיפות"] ||
       "";

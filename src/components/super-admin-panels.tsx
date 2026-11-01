@@ -6,6 +6,7 @@ import {
   deleteTicketsAction,
   getDeletableTicketsAction,
   importAutomationsAction,
+  previewAutomationImportAction,
   importTasksAction,
   previewTaskImportAction,
   type DeletableTicket,
@@ -196,13 +197,26 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
     });
   }
 
-  function previewAutomationRows(rows: AutomationImportRow[]): ImportPreviewRow[] {
-    return rows.map((row) => ({
-      key: `automation-${row.rowNumber}`,
-      label: `${row.rulePreview} ← ${row.actionPreview}`,
-      detail: row.incompleteReason || [row.buildingNames.join(", "), row.categoryNames.join(", "), row.subcategoryNames.join(", ")].filter(Boolean).join(" · "),
-      action: "create" as const,
-    }));
+  async function previewAutomationRows(
+    rows: AutomationImportRow[],
+  ): Promise<ImportPreviewRow[] | { error: string }> {
+    const result = await previewAutomationImportAction(complexId, rows);
+    if (result.error || !result.rows) {
+      return { error: result.error ?? dict.superAdmin.automationsUploadFailed };
+    }
+    const review = new Map(result.rows.map((row) => [row.rowNumber, row]));
+    return rows.map((row) => {
+      const rowReview = review.get(row.rowNumber);
+      const filters = [row.buildingNames.join(", "), row.categoryNames.join(", "), row.subcategoryNames.join(", ")];
+      return {
+        key: `automation-${row.rowNumber}`,
+        label: `${row.rulePreview} ← ${row.actionPreview}`,
+        detail: rowReview?.skipped
+          ?? ([row.incompleteReason, ...filters].filter(Boolean).join(" · ") || undefined),
+        action: rowReview?.skipped ? ("error" as const) : ("create" as const),
+        warnings: rowReview?.warnings,
+      };
+    });
   }
 
   async function handleAutomationsImport(rows: AutomationImportRow[]) {
@@ -323,7 +337,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         buildCsv={buildAutomationsCsvTemplate}
         buildExcel={buildAutomationsExcelTemplate}
         parse={parseAutomationsImportContent}
-        preview={previewAutomationRows}
+        previewAsync={previewAutomationRows}
         onClose={() => setAutomationsUploadOpen(false)}
         onImport={handleAutomationsImport}
       />

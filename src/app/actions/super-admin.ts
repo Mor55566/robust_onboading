@@ -70,6 +70,7 @@ import { importAreasAction } from "@/app/actions/admin-shared";
 import type { AreaImportRow } from "@/lib/area-import";
 import {
   resolveAutomationImportRows,
+  type AutomationImportLookup,
   type AutomationImportRow,
 } from "@/lib/automation-import";
 
@@ -129,6 +130,59 @@ export type DeletableTicket = {
   name: string;
 };
 
+async function loadAutomationImportLookup(complexId: string): Promise<AutomationImportLookup | null> {
+  const [complex, buildings, categories, users] = await Promise.all([
+    sql`SELECT id FROM complexes WHERE id = ${complexId} LIMIT 1`,
+    sql`SELECT id, name FROM buildings WHERE complex_id = ${complexId} ORDER BY name`,
+    sql`SELECT id, name, parent_category_id FROM task_categories WHERE complex_id = ${complexId} ORDER BY name`,
+    usersSql`
+      SELECT DISTINCT u.id, u.full_name
+      FROM users u
+      JOIN user_complex_permissions ucp ON ucp.user_id = u.id
+      WHERE ucp.complex_id = ${complexId}
+      ORDER BY u.full_name
+    `,
+  ]);
+  if (!complex.length) return null;
+  return {
+    buildings: buildings.map((row) => ({ id: row.id as string, name: row.name as string })),
+    categories: categories.map((row) => ({
+      id: row.id as string,
+      name: row.name as string,
+      parentId: (row.parent_category_id as string | null) ?? null,
+    })),
+    users: users.map((row) => ({ id: row.id as string, name: row.full_name as string })),
+  };
+}
+
+/** Review step: per-row warnings (unknown users) and rows that won't be imported. */
+export async function previewAutomationImportAction(
+  complexId: string,
+  rows: AutomationImportRow[],
+): Promise<{
+  error?: string;
+  rows?: Array<{ rowNumber: number; warnings: string[]; skipped: string | null }>;
+}> {
+  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
+  if (user.role !== "super_admin") return { error: dict.errors.unauthorized };
+  const parsedComplexId = z.string().uuid().safeParse(complexId);
+  if (!parsedComplexId.success || !Array.isArray(rows) || rows.length === 0) {
+    return { error: dict.superAdmin.automationsUploadInvalid };
+  }
+  const lookup = await loadAutomationImportLookup(parsedComplexId.data);
+  if (!lookup) return { error: dict.admin.complexNotFound };
+  const resolved = resolveAutomationImportRows(rows, lookup);
+  if (!resolved.ok) {
+    return { error: t(dict.superAdmin.uploadRowError, { row: resolved.rowNumber, message: resolved.message }) };
+  }
+  return {
+    rows: [
+      ...resolved.rows.map((row) => ({ rowNumber: row.rowNumber, warnings: row.warnings, skipped: null })),
+      ...resolved.skipped.map((row) => ({ rowNumber: row.rowNumber, warnings: [], skipped: row.message })),
+    ],
+  };
+}
+
 export async function importAutomationsAction(
   complexId: string,
   rows: AutomationImportRow[],
@@ -140,29 +194,11 @@ export async function importAutomationsAction(
     return { error: dict.superAdmin.automationsUploadInvalid };
   }
 
-  const [complex, buildings, categories, users] = await Promise.all([
-    sql`SELECT id FROM complexes WHERE id = ${parsedComplexId.data} LIMIT 1`,
-    sql`SELECT id, name FROM buildings WHERE complex_id = ${parsedComplexId.data} ORDER BY name`,
-    sql`SELECT id, name, parent_category_id FROM task_categories WHERE complex_id = ${parsedComplexId.data} ORDER BY name`,
-    usersSql`
-      SELECT DISTINCT u.id, u.full_name
-      FROM users u
-      JOIN user_complex_permissions ucp ON ucp.user_id = u.id
-      WHERE ucp.complex_id = ${parsedComplexId.data}
-      ORDER BY u.full_name
-    `,
-  ]);
-  if (!complex.length) return { error: dict.admin.complexNotFound };
+  const lookup = await loadAutomationImportLookup(parsedComplexId.data);
+  if (!lookup) return { error: dict.admin.complexNotFound };
 
-  const resolved = resolveAutomationImportRows(rows, {
-    buildings: buildings.map((row) => ({ id: row.id as string, name: row.name as string })),
-    categories: categories.map((row) => ({
-      id: row.id as string,
-      name: row.name as string,
-      parentId: (row.parent_category_id as string | null) ?? null,
-    })),
-    users: users.map((row) => ({ id: row.id as string, name: row.full_name as string })),
-  });
+  // Rows whose users all failed to resolve are in `resolved.skipped` and aren't written.
+  const resolved = resolveAutomationImportRows(rows, lookup);
   if (!resolved.ok) {
     return { error: t(dict.superAdmin.uploadRowError, { row: resolved.rowNumber, message: resolved.message }) };
   }
@@ -184,7 +220,7 @@ export async function importAutomationsAction(
       updated += 1;
       queries.push(sql`
         UPDATE automation_rules SET
-          trigger_type = ${row.triggerType}, delay_value = NULL, delay_unit = NULL,
+          trigger_type = ${row.triggerType}, delay_value = ${row.delayValue}, delay_unit = ${row.delayUnit},
           filter_urgencies = ${row.priorities}, building_ids = ${row.buildingIds},
           category_ids = ${row.categoryIds}, subcategory_ids = ${row.subcategoryIds},
           floor_ids = ARRAY[]::uuid[], area_ids = ARRAY[]::uuid[], equipment_ids = ARRAY[]::uuid[],
@@ -201,7 +237,7 @@ export async function importAutomationsAction(
           floor_ids, area_ids, equipment_ids, action_type, action_urgency,
           created_by_user_id, is_active
         ) VALUES (
-          ${id}, ${parsedComplexId.data}, ${row.name}, ${row.triggerType}, NULL, NULL,
+          ${id}, ${parsedComplexId.data}, ${row.name}, ${row.triggerType}, ${row.delayValue}, ${row.delayUnit},
           ${row.priorities}, ${row.buildingIds}, ${row.categoryIds}, ${row.subcategoryIds},
           ARRAY[]::uuid[], ARRAY[]::uuid[], ARRAY[]::uuid[], ${row.actionType},
           ${row.actionUrgency}, ${user.id}, true

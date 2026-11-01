@@ -32,6 +32,9 @@ export const MISSION_EXPORT_SCRIPT = `/*
     DEFAULT_TEST_ROWS: 1,
     MAX_REQUESTED_ROWS: 100,
     GRID_SELECTOR: '[data-test-id="assignments-table"] [role="grid"]',
+    SCAN_STEP_DELAY_MS: 250,
+    SCAN_LOAD_WAIT_MS: 4000,
+    SCAN_MAX_IDLE_ROUNDS: 3,
     ACTIONS_TOGGLE_SELECTOR: '[data-test-id="assignment-actions-dropdown"] .dropdown-button',
     EDIT_LINK_SELECTOR: 'a[data-test-id="edit-assignment-dropdown-button"]',
     EDIT_FORM_SELECTOR: 'form.assignment-form',
@@ -111,23 +114,53 @@ export const MISSION_EXPORT_SCRIPT = `/*
     const hrefs = new Set();
     const step = Math.max(100, Math.floor(grid.clientHeight * 0.75));
 
-    grid.scrollTop = 0;
-    grid.dispatchEvent(new Event('scroll', { bubbles: true }));
-    await sleep(150);
-
-    while (hrefs.size < requestedCount) {
+    const collect = () =>
       document
         .querySelectorAll(CONFIG.ROW_SELECTOR)
         .forEach((link) => hrefs.add(link.href));
+    const fireScroll = () => grid.dispatchEvent(new Event('scroll', { bubbles: true }));
+    const atBottom = () => grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 2;
 
-      if (grid.scrollTop + grid.clientHeight >= grid.scrollHeight - 2) break;
+    async function waitForMoreRows(previousCount, previousHeight) {
+      const started = Date.now();
+      while (Date.now() - started < CONFIG.SCAN_LOAD_WAIT_MS) {
+        await sleep(200);
+        collect();
+        if (hrefs.size > previousCount || grid.scrollHeight > previousHeight) return true;
+      }
+      return false;
+    }
 
-      const previousTop = grid.scrollTop;
-      grid.scrollTop = Math.min(grid.scrollTop + step, grid.scrollHeight);
-      grid.dispatchEvent(new Event('scroll', { bubbles: true }));
-      await sleep(150);
+    grid.scrollTop = 0;
+    fireScroll();
+    await sleep(CONFIG.SCAN_STEP_DELAY_MS);
 
-      if (grid.scrollTop === previousTop) break;
+    // The table lazy-loads more rows when the bottom is reached, so at the
+    // bottom we nudge it and wait; stop only after several idle rounds.
+    let idleRounds = 0;
+
+    while (hrefs.size < requestedCount && idleRounds < CONFIG.SCAN_MAX_IDLE_ROUNDS) {
+      collect();
+      const previousCount = hrefs.size;
+      const previousHeight = grid.scrollHeight;
+
+      if (!atBottom()) {
+        grid.scrollTop = Math.min(grid.scrollTop + step, grid.scrollHeight);
+        fireScroll();
+        await sleep(CONFIG.SCAN_STEP_DELAY_MS);
+        collect();
+        continue;
+      }
+
+      const links = document.querySelectorAll(CONFIG.ROW_SELECTOR);
+      links[links.length - 1]?.scrollIntoView({ block: 'end' });
+      grid.scrollTop = grid.scrollHeight;
+      fireScroll();
+      window.scrollTo(0, document.documentElement.scrollHeight);
+
+      const grew = await waitForMoreRows(previousCount, previousHeight);
+      idleRounds = grew ? 0 : idleRounds + 1;
+      console.log(\`[סריקה] נמצאו עד כה \${hrefs.size} משימות\`);
     }
 
     grid.scrollTop = originalScrollTop;

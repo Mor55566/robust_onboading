@@ -15,9 +15,11 @@ export type AutomationImportRow = {
   buildingNames: string[];
   categoryNames: string[];
   subcategoryNames: string[];
-  actionType: "assign_users" | "notify_users" | "set_urgency";
+  actionType: "assign_users" | "notify_users" | "set_urgency" | "set_due_at";
   userNames: string[];
   actionUrgency: "low" | "medium" | "high" | "critical" | null;
+  delayValue: number | null;
+  delayUnit: "minute" | "hour" | "day" | null;
   rulePreview: string;
   actionPreview: string;
   incompleteReason: string;
@@ -35,10 +37,14 @@ export type ResolvedAutomationImportRow = AutomationImportRow & {
   categoryIds: string[];
   subcategoryIds: string[];
   userIds: string[];
+  /** Non-blocking problems, e.g. users that weren't found and won't be assigned. */
+  warnings: string[];
 };
 
+export type SkippedAutomationImportRow = { rowNumber: number; message: string };
+
 export type AutomationImportResolution =
-  | { ok: true; rows: ResolvedAutomationImportRow[] }
+  | { ok: true; rows: ResolvedAutomationImportRow[]; skipped: SkippedAutomationImportRow[] }
   | { ok: false; rowNumber: number; message: string };
 
 const HEADERS = [
@@ -99,6 +105,20 @@ function parseAction(value: string): AutomationImportRow["actionType"] | null {
   if (normalized.includes("משוייכ") || normalized.includes("משויכ") || normalized === "assign users" || normalized === "assign_users") return "assign_users";
   if (normalized.includes("יותרא") || normalized.includes("התרא") || normalized === "notify users" || normalized === "notify_users") return "notify_users";
   if (normalized.includes("דחיפות") || normalized === "set urgency" || normalized === "set_urgency") return "set_urgency";
+  if (normalized.includes("זמן לטיפול") || normalized === "set due at" || normalized === "set_due_at") return "set_due_at";
+  return null;
+}
+
+// "3 ימים" / "12 שעות" / "30 דקות" → { value, unit }.
+function parseDuration(value: string): { value: number; unit: "minute" | "hour" | "day" } | null {
+  const match = normalize(value).match(/^(\d+)\s*(.+)$/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unitText = match[2]!;
+  if (!Number.isInteger(amount) || amount <= 0) return null;
+  if (/^(דק|minute)/.test(unitText)) return { value: amount, unit: "minute" };
+  if (/^(שע|hour)/.test(unitText)) return { value: amount, unit: "hour" };
+  if (/^(יו|ימ|day)/.test(unitText)) return { value: amount, unit: "day" };
   return null;
 }
 
@@ -138,6 +158,10 @@ export function parseAutomationsImportContent(
     if (!triggerType || !actionType || triggerType === "task_not_completed_for") {
       return { error: "invalidRow", message: `__row__:${i + 1}` };
     }
+    const duration = actionType === "set_due_at" ? parseDuration(get("action_preview")) : null;
+    if (actionType === "set_due_at" && (!duration || triggerType !== "task_opened")) {
+      return { error: "invalidRow", message: `__row__:${i + 1}` };
+    }
 
     const rulePreview = get("rule_preview");
     const hierarchy = rulePreview.split(">").map(stripCount);
@@ -158,7 +182,7 @@ export function parseAutomationsImportContent(
     const subcategoryNames = !hasNoCategory && hierarchy.length >= 3 ? splitComma(hierarchy.slice(2).join(">")) : [];
     const actionPreview = get("action_preview");
     const rawUsers = get("users");
-    const userNames = actionType === "set_urgency"
+    const userNames = actionType === "set_urgency" || actionType === "set_due_at"
       ? []
       : splitComma(normalize(rawUsers) === "בחר משתמש" ? actionPreview : rawUsers || actionPreview);
     const hidden = get("hidden_values");
@@ -176,6 +200,8 @@ export function parseAutomationsImportContent(
       actionType,
       userNames,
       actionUrgency: null,
+      delayValue: duration?.value ?? null,
+      delayUnit: duration?.unit ?? null,
       rulePreview,
       actionPreview,
       incompleteReason,
@@ -198,6 +224,7 @@ export function resolveAutomationImportRows(
   lookup: AutomationImportLookup,
 ): AutomationImportResolution {
   const resolved: ResolvedAutomationImportRow[] = [];
+  const skipped: SkippedAutomationImportRow[] = [];
   for (const row of rows) {
     if (row.incompleteReason) return { ok: false, rowNumber: row.rowNumber, message: row.incompleteReason };
     const buildingIds: string[] = [];
@@ -219,14 +246,20 @@ export function resolveAutomationImportRows(
       if (matches.length !== 1) return { ok: false, rowNumber: row.rowNumber, message: `תת־הקטגוריה „${name}” לא נמצאה תחת הקטגוריה שנבחרה` };
       subcategoryIds.push(matches[0]!.id);
     }
+    // Unknown users don't block the import: the rule is created without them.
     const userIds: string[] = [];
+    const warnings: string[] = [];
     for (const name of row.userNames) {
       const item = resolveUnique(lookup.users, name);
-      if (!item) return { ok: false, rowNumber: row.rowNumber, message: `המשתמש „${name}” לא נמצא או אינו חד־משמעי במתחם` };
-      userIds.push(item.id);
+      if (item) userIds.push(item.id);
+      else warnings.push(`המשתמש „${name}” לא נמצא או אינו חד־משמעי במתחם ולא ישויך לאוטומציה`);
     }
-    if (row.actionType !== "set_urgency" && userIds.length === 0) {
-      return { ok: false, rowNumber: row.rowNumber, message: "לא נמצאו משתמשים לפעולת האוטומציה" };
+    if (row.actionType !== "set_urgency" && row.actionType !== "set_due_at" && userIds.length === 0) {
+      skipped.push({
+        rowNumber: row.rowNumber,
+        message: [...warnings, "לא נמצאו משתמשים לפעולת האוטומציה, והיא לא תיובא"].join(" · "),
+      });
+      continue;
     }
     const description = `${row.rulePreview} ← ${row.actionPreview}`.replace(/\s+/g, " ").trim();
     resolved.push({
@@ -236,7 +269,8 @@ export function resolveAutomationImportRows(
       categoryIds: unique(categoryIds),
       subcategoryIds: unique(subcategoryIds),
       userIds: unique(userIds),
+      warnings,
     });
   }
-  return { ok: true, rows: resolved };
+  return { ok: true, rows: resolved, skipped };
 }

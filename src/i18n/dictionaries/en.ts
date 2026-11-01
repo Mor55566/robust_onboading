@@ -92,7 +92,7 @@ export const en = {
     invalidCallNumber:
       "ticket number \"{callNumber}\" is not valid. Ticket numbers must contain digits only.",
     automationsUploadTitle: "Upload automations",
-    automationsUploadSubtitle: "Select a complex and upload the automations file. Paths separated by > are resolved as building → category → subcategory. Rows with missing +N values are blocked to prevent partial imports.",
+    automationsUploadSubtitle: "Select a complex and upload the automations file. Paths separated by > are resolved as building → category → subcategory. “Call handling time” automations are imported as a due-date rule using the duration in action_preview (minutes, hours or days). Rows with missing +N values are blocked to prevent partial imports.",
     automationsUploadEmpty: "The file has no automation rows.",
     automationsUploadInvalid: "Could not read the automations file.",
     automationsUploadInvalidRow: "An automation row is invalid.",
@@ -109,7 +109,7 @@ export const en = {
     automationsImportGuideStep4Title:
       "Paste and run the script",
     automationsImportGuideStep4Body:
-      "Copy the script below, paste it into the Console and press Enter. It opens each automation read-only, collects its conditions and users, closes it, and finally downloads automations-YYYY-MM-DD.csv automatically — upload that file with the “Upload data” button. Don't click the page while it runs; progress is shown in the Console.",
+      "Copy the script below, paste it into the Console and press Enter. It opens each automation read-only, collects its conditions and action (assigned users, notified users, or call handling time such as “3 days”), closes it, and finally downloads automations-YYYY-MM-DD.csv automatically — upload that file with the “Upload data” button. Don't click the page while it runs; progress is shown in the Console.",
     automationsImportGuideScriptNote:
       "This script is also saved in the project at scripts/export_automations.js.",
     floorsUploadTitle: "Upload floors",

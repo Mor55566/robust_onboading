@@ -42,10 +42,11 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
           SELECT 1 FROM file_tags
           WHERE complex_id = ${complexId}
         ) AS file_tags,
+        -- The documents upload only creates the series; actual files come
+        -- with the attachments upload, so a series alone counts as uploaded.
         EXISTS (
-          SELECT 1 FROM files fl
-          JOIN file_series fs ON fs.id = fl.series_id
-          WHERE fs.complex_id = ${complexId}
+          SELECT 1 FROM file_series
+          WHERE complex_id = ${complexId}
         ) AS files,
         EXISTS (
           SELECT 1 FROM file_attachments fa

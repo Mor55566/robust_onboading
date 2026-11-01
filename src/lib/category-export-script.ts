@@ -84,7 +84,9 @@ export const CATEGORY_EXPORT_SCRIPT = `/* Paste this whole file into the browser
       byPath.get(path).push(item);
     }
     const inferredParents = [];
-    const rows = items.map(item => {
+    const createdParents = [];
+    let nextId = items.length;
+    const toRow = item => {
       // The supplied UI uses "Parent < Child"; support deeper paths too.
       const parts = item.label.split(/\\s+<\\s+/);
       const name = parts.pop();
@@ -92,17 +94,26 @@ export const CATEGORY_EXPORT_SCRIPT = `/* Paste this whole file into the browser
       const candidates = parentPath ? (byPath.get(parentPath) || []) : [];
       let parent = candidates.length === 1 ? candidates[0] : null;
       if (candidates.length > 1) {
-        parent = candidates.filter(candidate => candidate.pos < item.pos).at(-1);
-        if (!parent) throw new Error(\`יש כמה קטגוריות אב אפשריות ואין אב קודם ברשימה עבור: \${item.label}\`);
+        parent = candidates.filter(candidate => candidate.pos < item.pos).at(-1) || candidates[0];
         inferredParents.push({ categoryId: item.id, path: item.label, parentId: parent.id });
       }
-      if (parentPath && !parent) throw new Error(\`לא נמצאה קטגוריית אב עבור: \${item.label}\`);
+      if (parentPath && !parent) {
+        // The parent is not selectable in the list; create it so the child keeps its link.
+        parent = { pos: 0, id: ++nextId, label: parentPath };
+        byPath.set(parentPath, [parent]);
+        createdParents.push(parent);
+      }
       return { categoryId: item.id, name, 'parent category id': parent?.id || '', 'parent category name': parts.at(-1) || '' };
-    });
+    };
+    const rows = items.map(toRow);
+    // Created parents may themselves need created parents (deeper paths), so the list can grow while looping.
+    const createdRows = [];
+    for (let i = 0; i < createdParents.length; i++) createdRows.push(toRow(createdParents[i]));
+    rows.unshift(...createdRows.reverse());
     const headers = ['categoryId', 'name', 'parent category id', 'parent category name'];
     const csvCell = value => '"' + String(value ?? '').replace(/"/g, '""') + '"';
     const csv = '﻿' + [headers.join(','), ...rows.map(row => headers.map(key => csvCell(row[key])).join(','))].join('\\r\\n') + '\\r\\n';
-    window.categoryExport = { rows, csv, expected, idType: 'local-sequential', inferredParents };
+    window.categoryExport = { rows, csv, expected, idType: 'local-sequential', inferredParents, createdParents };
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const link = document.createElement('a');
     link.href = url;
@@ -114,6 +125,7 @@ export const CATEGORY_EXPORT_SCRIPT = `/* Paste this whole file into the browser
     console.table(rows);
     console.info(\`יוצאו \${rows.length} קטגוריות ל-categories.csv.\`);
     console.info('המזהים הם מספרים מקומיים לייצוא הזה, ולא מזהי המערכת.');
+    if (createdParents.length) console.warn('קטגוריות האב הבאות לא הופיעו ברשימה ונוצרו אוטומטית:', createdParents.map(parent => parent.label));
     if (inferredParents.length) console.warn('יש שמות מסלול כפולים של קטגוריות אב. השיוך הבא הוסק לפי האב הקרוב הקודם ברשימה ויש לבדוק אותו:', inferredParents);
     return window.categoryExport;
   } catch (error) {
