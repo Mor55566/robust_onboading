@@ -13,6 +13,13 @@ import {
 } from "@/lib/data-import";
 import type { TaskStatus, TaskUrgency } from "@/lib/types";
 
+/**
+ * Task locations often end in the equipment the call is about, e.g.
+ * "בניין B / קומה 35 < קומה 35 / גרעין < קומה 35 / גרעין / לוח חשמל חירום".
+ * Tasks have no equipment link, so place them in the deepest existing area.
+ */
+const TASK_LOCATION_OPTIONS = { fallbackToResolvedParent: true };
+
 /** Headers matching Visitt export columns that map onto tasks (+ related tables). */
 export const TASK_IMPORT_HEADERS = [
   "תיאור",
@@ -625,6 +632,8 @@ export function resolveTaskImportRows(options: {
             floors,
             areas,
             building.name,
+            "",
+            TASK_LOCATION_OPTIONS,
           );
           if (location.ok && (location.floorId || location.areaId)) {
             buildingId = building.id;
@@ -646,6 +655,8 @@ export function resolveTaskImportRows(options: {
           floors,
           areas,
           buildingName,
+          "",
+          TASK_LOCATION_OPTIONS,
         );
         if (location.ok) {
           floorId = location.floorId;

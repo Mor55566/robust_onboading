@@ -123,6 +123,43 @@ describe("tasks CSV import", () => {
     assert.equal(resolved.rows[0]?.callNumber, "453055");
   });
 
+  it("places a task whose location ends in equipment in the parent area", () => {
+    const parsed = parseTasksImportContent(
+      "תיאור,בניין,מיקום\nתקלה בלוח,בניין B,בניין B / קומה 35 < קומה 35 / גרעין < קומה 35 / גריען / לוח חשמל חירום",
+      "visitt.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+
+    const resolved = resolveTaskImportRows({
+      rows: parsed.rows,
+      buildings: [{ id: "b1", name: "בניין B" }],
+      floorsByBuilding: new Map([
+        ["b1", [{ id: "f35", name: "קומה 35", number: 35 }]],
+      ]),
+      areasByBuilding: new Map([
+        [
+          "b1",
+          [
+            {
+              id: "a-core",
+              name: "קומה 35 / גרעין",
+              floor_id: "f35",
+              parent_area_id: null,
+            },
+          ],
+        ],
+      ]),
+      users: [],
+      categories: [],
+      fallbackOpenedByUserId: "user-1",
+    });
+
+    assert.ok(resolved.ok, JSON.stringify(resolved));
+    assert.equal(resolved.rows[0]?.buildingId, "b1");
+    assert.equal(resolved.rows[0]?.floorId, "f35");
+    assert.equal(resolved.rows[0]?.areaId, "a-core");
+  });
+
   it("reports a missing description column explicitly", () => {
     const parsed = parseTasksImportContent(
       "מספר קריאה,בניין\n453055,בניין B",

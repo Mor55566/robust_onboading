@@ -717,6 +717,14 @@ export function resolveExistingEquipmentLocation(
   areas: EquipmentLocationArea[],
   buildingName: string,
   equipmentName = "",
+  options: {
+    /**
+     * When the trailing segments are not existing areas (e.g. a task location
+     * ending in an equipment name like "קומה 35 / גרעין / לוח חשמל חירום"),
+     * fall back to the deepest floor/area that did resolve.
+     */
+    fallbackToResolvedParent?: boolean;
+  } = {},
 ):
   | { ok: true; floorId: string | null; areaId: string | null }
   | { ok: false; message: string } {
@@ -908,6 +916,9 @@ export function resolveExistingEquipmentLocation(
       }
     }
     if (!parent) {
+      if (options.fallbackToResolvedParent) {
+        return { ok: true, floorId: floor.id, areaId: parentAreaId };
+      }
       return unresolved(`Area not found: ${parentName}`);
     }
     parentAreaId = parent.id;
@@ -976,6 +987,10 @@ export function resolveExistingEquipmentLocation(
       floorId: floor.id,
       areaId: parentAreaId,
     };
+  }
+
+  if (options.fallbackToResolvedParent) {
+    return { ok: true, floorId: floor.id, areaId: parentAreaId };
   }
 
   return unresolved(`Area not found: ${leafName}`);
