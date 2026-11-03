@@ -396,4 +396,39 @@ describe("areas CSV import", () => {
     assert.equal(resolved.floor?.number, 0);
     assert.equal(resolved.leafName, "חדר מדרגות 1 בניין B");
   });
+
+  it("keeps a floor-prefixed parent on the resolved floor when floor numbers are sort levels", () => {
+    // Floor numbers here are off by one from the names, like the TOU Towers upload.
+    const floors: AreaImportFloor[] = [34, 35, 36].map((label) => ({
+      id: `floor-${label}`,
+      name: `בניין B / קומה ${label}`,
+      number: label - 1,
+    }));
+    const row = (rowNumber: number, location: string, name: string) => ({
+      rowNumber,
+      externalId: `ext-${rowNumber}`,
+      location,
+      name,
+      type: "",
+      qrCode: "",
+    });
+    let next = 0;
+    const plan = planAreasImport({
+      rows: [
+        row(82, "בניין B / קומה 35 < קומה 35 / חדר משאבות כיבוי אש", "קומה 35 / חדר משאבות כיבוי אש"),
+        row(83, "בניין B / קומה 35 < קומה 35 / חדר משאבות כיבוי אש < קומה 35 / גרעין", "קומה 35 / גרעין"),
+      ],
+      floors,
+      areas: [],
+      buildingName: "בניין B",
+      createId: () => `area-${++next}`,
+    });
+
+    assert.deepEqual(plan.issues, []);
+    assert.deepEqual(plan.createdParents, []);
+    const [pumpRoom, core] = plan.items;
+    assert.equal(pumpRoom.floorId, "floor-35");
+    assert.equal(core.floorId, "floor-35");
+    assert.equal(core.parentAreaId, pumpRoom.areaId);
+  });
 });

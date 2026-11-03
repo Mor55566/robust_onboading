@@ -643,8 +643,9 @@ export function resolveLocationPath(
   const parentNames: string[] = [];
 
   for (const segment of ancestorSegments) {
-    if (parentNames.length > 0) {
-      // Floor references only apply before the first area name.
+    if (parentNames.length > 0 || floor) {
+      // Floor references only apply before the first area name, and once a
+      // floor is resolved every later segment is an area name as written.
       parentNames.push(segment);
       continue;
     }
@@ -661,7 +662,13 @@ export function resolveLocationPath(
 
     const hint = extractFloorHintFromSegment(segment, buildingName);
     if (hint) {
-      const matchedFloor = floors.find((item) => item.number === hint.number);
+      // Match the floor by its name first; the stored number is a sort level
+      // and need not equal the label (e.g. "קומה 35" may be number 34).
+      const byName = matchFloorSegment(hint.label, floors, buildingName);
+      const matchedFloor =
+        byName.ok && byName.floor
+          ? byName.floor
+          : floors.find((item) => item.number === hint.number);
       if (!matchedFloor) {
         return {
           ok: false,
