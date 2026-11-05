@@ -82,6 +82,12 @@ export type MissionImportChecklistItem = {
   numberMin: number | null;
   numberMax: number | null;
   options: string[];
+  /**
+   * Conditional field: the 0-based sortOrder of the question in the same
+   * checklist that controls it, and the answers that make it visible.
+   */
+  showIfSortOrder?: number | null;
+  showIfValues?: string[];
   /** Raw location paths belonging to this checklist row. */
   locations?: string[];
   /**
@@ -118,6 +124,8 @@ function checklistItemIdentity(item: MissionImportChecklistItem): string {
     numberMin: item.numberMin,
     numberMax: item.numberMax,
     options: item.options,
+    showIfSortOrder: item.showIfSortOrder ?? null,
+    showIfValues: item.showIfValues ?? [],
   });
 }
 
@@ -621,6 +629,14 @@ export function parseMissionsImportContent(
   const numberMaxIndex = findHeaderIndex(header, ["number_max", "number max"]);
   const optionsIndex = findHeaderIndex(header, ["options"]);
   const requiredIndex = findHeaderIndex(header, ["is_required", "required", "חובה"]);
+  const conditionParentOrderIndex = findHeaderIndex(header, [
+    "condition_parent_order",
+    "condition parent order",
+  ]);
+  const conditionOptionIndex = findHeaderIndex(header, [
+    "condition_option",
+    "condition option",
+  ]);
 
   if ((externalIdIndex < 0 && sourceIndexIndex < 0) || titleIndex < 0) {
     return { error: "invalid", message: "__missing_required__" };
@@ -713,6 +729,17 @@ export function parseMissionsImportContent(
       const numberMax = Number.isFinite(constraintMax) ? constraintMax : Number.isFinite(columnMax) ? columnMax : null;
       const numberRule: MissionImportChecklistItem["numberRule"] = itemType !== "number" ? null : constraintType === "between" ? "between" : ["greater_than", "greater-than", "min"].includes(constraintType) ? "greater_than" : ["less_than", "less-than", "max"].includes(constraintType) ? "less_than" : "any";
 
+      // A conditional row names its controlling question by its 1-based
+      // checklist_order; without a resolved parent the field is always shown.
+      const parentOrderCell =
+        conditionParentOrderIndex >= 0 ? (cells[conditionParentOrderIndex] ?? "").trim() : "";
+      const conditionOption =
+        conditionOptionIndex >= 0 ? (cells[conditionOptionIndex] ?? "").trim() : "";
+      const showIfSortOrder =
+        /^\d+$/.test(parentOrderCell) && Number(parentOrderCell) > 0 && conditionOption
+          ? Number(parentOrderCell) - 1
+          : null;
+
       checklistItems.push({
         checklistTitle:
           checklistTitleIndex >= 0
@@ -728,6 +755,8 @@ export function parseMissionsImportContent(
         numberMin: numberRule === "between" || numberRule === "greater_than" ? numberMin : null,
         numberMax: numberRule === "between" || numberRule === "less_than" ? numberMax : null,
         options: itemType === "options" ? parsedOptions : [],
+        showIfSortOrder,
+        showIfValues: showIfSortOrder != null ? [conditionOption] : [],
         locations: rowLocations,
         locationOrder: parseLocationOrder(
           locationOrderIndex >= 0 ? cells[locationOrderIndex] ?? "" : "",
@@ -849,6 +878,23 @@ function splitConcatenatedBuildingLocations(
   return separated.split(";").map((value) => value.trim()).filter(Boolean);
 }
 
+/** The building whose name starts a location path ("בניין B / קומה 35 < …"). */
+function buildingNamedByLocation(
+  location: string,
+  buildings: TaskImportBuilding[],
+): TaskImportBuilding | null {
+  const normalizedLocation = normalizeLookup(location);
+  let best: TaskImportBuilding | null = null;
+  for (const building of buildings) {
+    const name = normalizeLookup(building.name);
+    if (!name || !normalizedLocation.startsWith(name)) continue;
+    const next = normalizedLocation.charAt(name.length);
+    if (next && !/[\s/<]/.test(next)) continue;
+    if (!best || name.length > normalizeLookup(best.name).length) best = building;
+  }
+  return best;
+}
+
 function resolveMissionLocations(options: {
   locations: string[];
   buildingNames: string[];
@@ -885,117 +931,82 @@ function resolveMissionLocations(options: {
     ),
   );
 
+  function pushLocation(match: {
+    buildingId: string;
+    floorId: string | null;
+    areaId: string | null;
+  }) {
+    const key = `${match.buildingId}:${match.floorId ?? ""}:${match.areaId ?? ""}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      resolvedLocations.push(match);
+    }
+  }
+
+  // Exact match of one location path inside one building: the building
+  // itself, an equipment leaf, or an existing floor/area path.
+  function matchInBuilding(location: string, building: TaskImportBuilding) {
+    if (normalizeLookup(location) === normalizeLookup(building.name)) {
+      return { buildingId: building.id, floorId: null, areaId: null };
+    }
+    const locationLeaf = splitLocationHierarchy(location).at(-1) ?? "";
+    const equipment = (options.equipmentByBuilding?.get(building.id) ?? []).find(
+      (item) => normalizeLookup(item.name) === normalizeLookup(locationLeaf),
+    );
+    if (equipment) {
+      return {
+        buildingId: building.id,
+        floorId: equipment.floor_id,
+        areaId: equipment.area_id,
+      };
+    }
+    const resolved = resolveExistingEquipmentLocation(
+      location,
+      options.floorsByBuilding.get(building.id) ?? [],
+      options.areasByBuilding.get(building.id) ?? [],
+      building.name,
+    );
+    if (resolved.ok && (resolved.floorId || resolved.areaId)) {
+      return {
+        buildingId: building.id,
+        floorId: resolved.floorId,
+        areaId: resolved.areaId,
+      };
+    }
+    return null;
+  }
+
   for (const location of expandedLocations) {
-    let matched = false;
-    for (const building of buildingsToTry) {
-      if (normalizeLookup(location) === normalizeLookup(building.name)) {
-        const key = `${building.id}::`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          resolvedLocations.push({
-            buildingId: building.id,
-            floorId: null,
-            areaId: null,
-          });
-        }
-        matched = true;
-        break;
-      }
-      const floors = options.floorsByBuilding.get(building.id) ?? [];
-      const areas = options.areasByBuilding.get(building.id) ?? [];
-      const locationLeaf = splitLocationHierarchy(location).at(-1) ?? "";
-      const equipment = (options.equipmentByBuilding?.get(building.id) ?? []).find(
-        (item) => normalizeLookup(item.name) === normalizeLookup(locationLeaf),
-      );
-      if (equipment) {
-        const match = {
-          buildingId: building.id,
-          floorId: equipment.floor_id,
-          areaId: equipment.area_id,
-        };
-        const key = `${match.buildingId}:${match.floorId ?? ""}:${match.areaId ?? ""}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          resolvedLocations.push(match);
-        }
-        matched = true;
-        break;
-      }
-      const resolved = resolveExistingEquipmentLocation(
-        location,
-        floors,
-        areas,
-        building.name,
-      );
-      if (resolved.ok && (resolved.floorId || resolved.areaId)) {
-        const match = {
-          buildingId: building.id,
-          floorId: resolved.floorId,
-          areaId: resolved.areaId,
-        };
-        const key = `${match.buildingId}:${match.floorId ?? ""}:${match.areaId ?? ""}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          resolvedLocations.push(match);
-        }
-        matched = true;
-        break;
-      }
+    // A path that starts with a building name ("בניין B / קומה 35 < …")
+    // belongs to that building, whatever order the mission lists them in.
+    const prefixBuilding = buildingNamedByLocation(location, options.buildings);
+    const order = prefixBuilding
+      ? [prefixBuilding, ...buildingsToTry.filter((b) => b.id !== prefixBuilding.id)]
+      : buildingsToTry;
+
+    // The full path first; when its tail is missing here (archived, renamed
+    // or never imported), the deepest ancestor path that exists.
+    const segments = splitLocationHierarchy(location);
+    const candidates = [location];
+    for (let length = segments.length - 1; length >= 1; length -= 1) {
+      candidates.push(segments.slice(0, length).join(" < "));
     }
 
-    if (!matched && buildingCandidates.length === 0) {
-      for (const building of options.buildings) {
-        if (normalizeLookup(location) === normalizeLookup(building.name)) {
-          const key = `${building.id}::`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            resolvedLocations.push({
-              buildingId: building.id,
-              floorId: null,
-              areaId: null,
-            });
-          }
-          break;
-        }
-        const floors = options.floorsByBuilding.get(building.id) ?? [];
-        const areas = options.areasByBuilding.get(building.id) ?? [];
-        const locationLeaf = splitLocationHierarchy(location).at(-1) ?? "";
-        const equipment = (options.equipmentByBuilding?.get(building.id) ?? []).find(
-          (item) => normalizeLookup(item.name) === normalizeLookup(locationLeaf),
-        );
-        if (equipment) {
-          const match = {
-            buildingId: building.id,
-            floorId: equipment.floor_id,
-            areaId: equipment.area_id,
-          };
-          const key = `${match.buildingId}:${match.floorId ?? ""}:${match.areaId ?? ""}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            resolvedLocations.push(match);
-          }
-          break;
-        }
-        const resolved = resolveExistingEquipmentLocation(
-          location,
-          floors,
-          areas,
-          building.name,
-        );
-        if (resolved.ok && (resolved.floorId || resolved.areaId)) {
-          const match = {
-            buildingId: building.id,
-            floorId: resolved.floorId,
-            areaId: resolved.areaId,
-          };
-          const key = `${match.buildingId}:${match.floorId ?? ""}:${match.areaId ?? ""}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            resolvedLocations.push(match);
-          }
+    let matched = false;
+    for (const candidate of candidates) {
+      for (const building of order) {
+        const match = matchInBuilding(candidate, building);
+        if (match) {
+          pushLocation(match);
+          matched = true;
           break;
         }
       }
+      if (matched) break;
+    }
+
+    if (!matched && prefixBuilding) {
+      pushLocation({ buildingId: prefixBuilding.id, floorId: null, areaId: null });
     }
   }
 
@@ -1173,7 +1184,7 @@ export function resolveMissionImportRows(options: {
       rowNumber: row.rowNumber,
       externalId: row.externalId,
       title: row.title,
-      description: row.description.trim() || row.title,
+      description: row.description.trim(),
       schedule: parseMissionFrequency(row.frequency),
       skipHolidays: row.skipHolidays,
       isPaused: row.isPaused,

@@ -11,6 +11,22 @@ import {
 } from "./mission-import";
 
 describe("scheduled missions CSV import", () => {
+  it("keeps missing descriptions empty and preserves descriptions matching the title", () => {
+    for (const description of ["", "   ", "בדיקה"]) {
+      const parsed = parseMissionsImportContent(
+        `source_index,assignment_name,description\n1,בדיקה,${description}`, "missions.csv",
+      );
+      assert.ok(!("error" in parsed), JSON.stringify(parsed));
+      const resolved = resolveMissionImportRows({
+        rows: parsed.rows,
+        buildings: [], floorsByBuilding: new Map(), areasByBuilding: new Map(),
+        users: [], categories: [], fallbackOpenedByUserId: "fallback",
+      });
+      assert.ok(resolved.ok);
+      assert.equal(resolved.rows[0]?.description, description.trim());
+    }
+  });
+
   it("carries holiday booleans from exporter rows through database resolution", () => {
     for (const [value, expected] of [
       ["yes", true], ["true", true], [" YES ", true], ["1", true],
@@ -267,6 +283,40 @@ describe("scheduled missions CSV import", () => {
     );
   });
 
+  it("parses conditional fields from the exporter's condition columns", () => {
+    const parsed = parseMissionsImportContent(
+      [
+        "source_index,assignment_name,checklist_title,checklist_order,checklist_name,field_type,options,is_conditional,condition_parent_order,condition_parent_name,condition_option",
+        '1,"סיור","גג",1,"עובד",multi_select,"[""כן"",""לא""]",no,,,',
+        '1,"סיור","גג",2,"טמפרטורה",number,,yes,1,"עובד","כן"',
+        '1,"סיור","גג",3,"רעש",multi_select,"[""כן"",""לא""]",yes,,,"כן"',
+      ].join("\n"),
+      "conditions.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+
+    const items = parsed.rows[0]!.checklistItems;
+    assert.equal(items[0]?.showIfSortOrder, null);
+    assert.deepEqual(items[0]?.showIfValues, []);
+    assert.equal(items[1]?.showIfSortOrder, 0);
+    assert.deepEqual(items[1]?.showIfValues, ["כן"]);
+    // No resolved parent: the field is imported as always shown.
+    assert.equal(items[2]?.showIfSortOrder, null);
+    assert.deepEqual(items[2]?.showIfValues, []);
+  });
+
+  it("leaves fields unconditional when the file has no condition columns", () => {
+    const parsed = parseMissionsImportContent(
+      [
+        "source_index,assignment_name,checklist_order,checklist_name,field_type",
+        '1,"סיור",1,"בדוק",checkbox',
+      ].join("\n"),
+      "legacy.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+    assert.equal(parsed.rows[0]!.checklistItems[0]?.showIfSortOrder, null);
+  });
+
   it("keeps a comma inside an ordered row's location name", () => {
     const location = "קומה 36 / גלריה 1/ מפוח R1A / יניקה משרותים קומות 26-34 , קומות 10 עד מינוס 4";
     const parsed = parseMissionsImportContent(
@@ -319,6 +369,53 @@ describe("scheduled missions CSV import", () => {
       { buildingId: "building-a", floorId: "floor-1", areaId: null },
       { buildingId: "building-a", floorId: "floor-2", areaId: null },
     ]);
+  });
+
+  it("places a location in the building its path names, keeping the deepest existing part", () => {
+    const roof = "בניין B / קומה 35 < קומה 35 / גג טכני < קומה 35 / גג טכני / צ'ילר 2";
+    const missing = "בניין B / קומה 35 < קומה 35 / גרעין < קומה 35 / גריען / עמדה 3B";
+    const parsed = parseMissionsImportContent(
+      [
+        "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
+        `1,"סיור","בניין A, בניין B","${roof}",1,"${roof}",1,"בדוק",checkbox`,
+        `1,"סיור","בניין A, בניין B","${missing}",2,"${missing}",1,"בדוק",checkbox`,
+      ].join("\n"),
+      "prefixed.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+
+    const floors = (prefix: string, id: string) => [
+      { id, name: `${prefix} / קומה 35`, number: 35 },
+    ];
+    const areas = (floorId: string, id: string) => [
+      { id, name: "קומה 35 / גג טכני", floor_id: floorId, parent_area_id: null },
+    ];
+    const resolved = resolveMissionImportRows({
+      rows: parsed.rows,
+      buildings: [
+        { id: "building-a", name: "בניין A" },
+        { id: "building-b", name: "בניין B" },
+      ],
+      floorsByBuilding: new Map([
+        ["building-a", floors("בניין A", "floor-a35")],
+        ["building-b", floors("בניין B", "floor-b35")],
+      ]),
+      areasByBuilding: new Map([
+        ["building-a", areas("floor-a35", "roof-a")],
+        ["building-b", areas("floor-b35", "roof-b")],
+      ]),
+      users: [],
+      categories: [],
+      fallbackOpenedByUserId: "fallback-user",
+    });
+    assert.ok(resolved.ok);
+    assert.deepEqual(
+      resolved.rows[0]?.checklistGroups.map((group) => group.locations),
+      [
+        [{ buildingId: "building-b", floorId: "floor-b35", areaId: "roof-b" }],
+        [{ buildingId: "building-b", floorId: "floor-b35", areaId: null }],
+      ],
+    );
   });
 
   it("retains locations concatenated without a separator under one mission", () => {

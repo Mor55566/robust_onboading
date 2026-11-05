@@ -23,8 +23,8 @@ export const MISSION_EXPORT_SCRIPT = `/*
     CLOSE_NAVIGATION_TIMEOUT_MS: 4000,
     BEFORE_OPEN_MIN_MS: 900,
     BEFORE_OPEN_MAX_MS: 1700,
-    BEFORE_OPTION_CLICK_MIN_MS: 450,
-    BEFORE_OPTION_CLICK_MAX_MS: 900,
+    BEFORE_OPTION_CLICK_MIN_MS: 150,
+    BEFORE_OPTION_CLICK_MAX_MS: 300,
     BEFORE_CLOSE_MIN_MS: 500,
     BEFORE_CLOSE_MAX_MS: 1000,
     BETWEEN_ROWS_MIN_MS: 1200,
@@ -41,6 +41,10 @@ export const MISSION_EXPORT_SCRIPT = `/*
     ORDER_STEP_TITLE: 'סדר',
     ORDER_ROW_SELECTOR: '.site-sort-wrapper[data-id]',
     ORDER_TIMEOUT_MS: 6000,
+    TRIGGER_SELECTOR: '.trigger-indicator',
+    TOOLTIP_SELECTOR: '#tooltip-root .Tooltip .Tooltip-after',
+    TOOLTIP_TIMEOUT_MS: 2000,
+    TOOLTIP_GONE_TIMEOUT_MS: 1000,
   });
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -531,8 +535,145 @@ export const MISSION_EXPORT_SCRIPT = `/*
     }
   }
 
-  function extractChecklistItems(root) {
-    return [...root.querySelectorAll(CONFIG.ITEM_SELECTOR)].map(
+  // A conditional item shows a routing icon; hovering it shows a tooltip like
+  // "בדיקה זו תופיעה רק במידה ואפשרות כן נבחרה". Hovering is read-only.
+  function visibleTooltipText() {
+    const nodes = [...document.querySelectorAll(CONFIG.TOOLTIP_SELECTOR)].filter(
+      (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden'
+        );
+      }
+    );
+    return clean(nodes.at(-1)?.textContent);
+  }
+
+  async function pollFor(getValue, timeoutMs) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const value = getValue();
+      if (value) return value;
+      await sleep(50);
+    }
+    return null;
+  }
+
+  function dispatchHover(target, entering) {
+    const rect = target.getBoundingClientRect();
+    const options = {
+      cancelable: true,
+      composed: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+    };
+    const names = entering
+      ? ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']
+      : ['pointerout', 'pointerleave', 'mouseout', 'mouseleave'];
+    for (const name of names) {
+      const EventType = name.startsWith('pointer') ? PointerEvent : MouseEvent;
+      const bubbles = !name.endsWith('enter') && !name.endsWith('leave');
+      target.dispatchEvent(new EventType(name, { ...options, bubbles }));
+    }
+  }
+
+  async function readConditionTooltips(modal) {
+    const tooltips = new Map();
+
+    for (const item of modal.querySelectorAll(CONFIG.ITEM_SELECTOR)) {
+      const indicator = item.querySelector(CONFIG.TRIGGER_SELECTOR);
+      if (!(indicator instanceof HTMLElement)) continue;
+
+      const targets = [
+        indicator,
+        indicator.closest('.Tooltip-wrapper'),
+        indicator.querySelector('.Icon'),
+      ].filter((target) => target instanceof HTMLElement);
+
+      let text = '';
+
+      for (const target of targets) {
+        target.scrollIntoView({ block: 'center' });
+        await sleep(100);
+        dispatchHover(target, true);
+        text = (await pollFor(visibleTooltipText, CONFIG.TOOLTIP_TIMEOUT_MS)) || '';
+        dispatchHover(target, false);
+        await pollFor(() => !visibleTooltipText(), CONFIG.TOOLTIP_GONE_TIMEOUT_MS);
+        if (text) break;
+      }
+
+      if (!text) {
+        console.warn(
+          'לא ניתן היה לקרוא את התנאי של השדה:',
+          clean(item.querySelector('.item-name-readonly')?.textContent)
+        );
+      }
+
+      tooltips.set(item, text);
+    }
+
+    return tooltips;
+  }
+
+  function parseConditionOption(text) {
+    const match = clean(text).match(/אפשרו(?:ת|יות)\\s+(.+?)\\s+נבחר/);
+    return match ? clean(match[1]) : '';
+  }
+
+  // The tooltip names only the option, not the question. The parent is the
+  // nearest earlier non-conditional multi-select that has that option; the
+  // number next to the icon is checked against the parent's position.
+  function resolveConditions(rows) {
+    for (const [index, row] of rows.entries()) {
+      if (!row.is_conditional) continue;
+
+      const earlier = rows
+        .slice(0, index)
+        .reverse()
+        .filter((candidate) => !candidate.is_conditional);
+
+      const parent =
+        earlier.find(
+          (candidate) =>
+            candidate.field_type === 'multi_select' &&
+            row.condition_option &&
+            JSON.parse(candidate.options).includes(row.condition_option)
+        ) || null;
+
+      if (!parent) {
+        console.warn(
+          'לא נמצאה שאלת אב לשדה המותנה:',
+          row.checklist_name,
+          row.condition_text
+        );
+        continue;
+      }
+
+      row.condition_parent_order = parent.checklist_order;
+      row.condition_parent_name = parent.checklist_name;
+
+      if (row.condition_trigger_number && Number(row.condition_trigger_number) !== parent.checklist_order) {
+        console.warn(
+          'המספר ליד אייקון התנאי לא תואם למיקום שאלת האב:',
+          row.checklist_name,
+          'מספר: ' + row.condition_trigger_number,
+          'שאלת אב: ' + parent.checklist_order + ' (' + parent.checklist_name + ')'
+        );
+      }
+    }
+
+    return rows;
+  }
+
+  function extractChecklistItems(root, conditionTooltips) {
+    const rows = [...root.querySelectorAll(CONFIG.ITEM_SELECTOR)].map(
       (item, checklistIndex) => {
         const nameContainer = item.querySelector('.item-name');
         const wrapper = item.querySelector('.item-type-data-wrapper');
@@ -571,6 +712,14 @@ export const MISSION_EXPORT_SCRIPT = `/*
                 number_max: null,
               };
 
+        const indicator = item.querySelector(CONFIG.TRIGGER_SELECTOR);
+        const isConditional = Boolean(
+          indicator || item.querySelector('.item-info.conditional')
+        );
+        const conditionText = isConditional
+          ? conditionTooltips?.get(item) || ''
+          : '';
+
         return {
           checklist_order: checklistIndex + 1,
           checklist_name: clean(
@@ -589,12 +738,20 @@ export const MISSION_EXPORT_SCRIPT = `/*
           number_max: numberDefinition.number_max,
           options_count: options.length,
           options: JSON.stringify(options),
+          is_conditional: isConditional,
+          condition_trigger_number: indicator ? clean(indicator.textContent) : '',
+          condition_text: conditionText,
+          condition_option: parseConditionOption(conditionText),
+          condition_parent_order: '',
+          condition_parent_name: '',
         };
       }
     );
+
+    return resolveConditions(rows);
   }
 
-  function extractAssignment(modal, sourceIndex) {
+  function extractAssignment(modal, sourceIndex, conditionTooltips) {
     const fullTitle = clean(modal.querySelector('h2')?.textContent);
     const assignmentName = fullTitle.replace(/^משימה\\s*\\/\\s*/, '');
 
@@ -628,7 +785,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
       common,
       sections: effectiveSections.map((section) => ({
         locations: extractLocations(section),
-        items: extractChecklistItems(section),
+        items: extractChecklistItems(section, conditionTooltips),
       })),
     };
   }
@@ -771,9 +928,15 @@ export const MISSION_EXPORT_SCRIPT = `/*
       'number_max',
       'options_count',
       'options',
+      'is_conditional',
+      'condition_parent_order',
+      'condition_parent_name',
+      'condition_option',
+      'condition_text',
+      'condition_trigger_number',
     ];
 
-    const booleanColumns = new Set(['skip_on_holidays', 'is_paused', 'is_required']);
+    const booleanColumns = new Set(['skip_on_holidays', 'is_paused', 'is_required', 'is_conditional']);
 
     const csv = [
       columns.map(csvCell).join(','),
@@ -929,7 +1092,9 @@ export const MISSION_EXPORT_SCRIPT = `/*
 
     await expandMultiSelectOptions(modal);
 
-    const cards = extractAssignment(modal, index);
+    const conditionTooltips = await readConditionTooltips(modal);
+
+    const cards = extractAssignment(modal, index, conditionTooltips);
     const { siteOrder, returned } = await readSiteOrder(modal, assignmentHref);
     const extracted = buildAssignmentExport(cards, siteOrder);
 

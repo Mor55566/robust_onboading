@@ -2905,16 +2905,30 @@ export async function importScheduledMissionsAction(
               ) AS x(building_id, floor_id, area_id)
             `);
           }
+          // A conditional item points at the item with the controlling
+          // question's sort order in this same checklist.
+          const itemIdBySortOrder = new Map<number, string>();
+          items.forEach((item, index) => {
+            if (!itemIdBySortOrder.has(item.sortOrder)) {
+              itemIdBySortOrder.set(item.sortOrder, itemIds[index]!);
+            }
+          });
+          const showIfItemIds = items.map((item, index) => {
+            if (item.showIfSortOrder == null) return null;
+            const parentId = itemIdBySortOrder.get(item.showIfSortOrder) ?? null;
+            return parentId && parentId !== itemIds[index] ? parentId : null;
+          });
           queries.push(sql`
             INSERT INTO task_checklist_items (
               id, task_checklist_id, label, sort_order, item_type,
               field_type_original, is_required, number_unit, number_rule,
-              number_min, number_max, options
+              number_min, number_max, options, show_if_item_id, show_if_values
             )
             SELECT
               x.id, ${checklistId}, x.label, x.sort_order, x.item_type,
               x.field_type_original, x.is_required, x.number_unit, x.number_rule,
-              x.number_min, x.number_max, x.options::jsonb
+              x.number_min, x.number_max, x.options::jsonb,
+              x.show_if_item_id, x.show_if_values::jsonb
             FROM unnest(
               ${itemIds}::uuid[],
               ${items.map((item) => item.label)}::text[],
@@ -2926,10 +2940,15 @@ export async function importScheduledMissionsAction(
               ${items.map((item) => item.numberRule)}::text[],
               ${items.map((item) => item.numberMin)}::numeric[],
               ${items.map((item) => item.numberMax)}::numeric[],
-              ${items.map((item) => JSON.stringify(item.options))}::text[]
+              ${items.map((item) => JSON.stringify(item.options))}::text[],
+              ${showIfItemIds}::uuid[],
+              ${items.map((item, index) =>
+                JSON.stringify(showIfItemIds[index] ? (item.showIfValues ?? []) : []),
+              )}::text[]
             ) AS x(
               id, label, sort_order, item_type, field_type_original,
-              is_required, number_unit, number_rule, number_min, number_max, options
+              is_required, number_unit, number_rule, number_min, number_max, options,
+              show_if_item_id, show_if_values
             )
           `);
         }
@@ -3355,7 +3374,7 @@ export async function importMissionHistoryAction(
 
       const queries: ReturnType<typeof sql>[] = [];
       const missionId = row.existingMissionId ?? crypto.randomUUID();
-      const description = row.note || row.title;
+      const description = row.note.trim();
 
       if (row.classification === "update") {
         queries.push(sql`
@@ -3368,6 +3387,10 @@ export async function importMissionHistoryAction(
             resolved_at = ${row.status === "closed" ? (row.closedAt ?? row.dueAt) : null}::timestamptz,
             resolved_by_user_id = ${row.status === "closed" ? row.resolvedByUserId : null},
             due_at = ${row.dueAt}::timestamptz,
+            template_task_id = COALESCE(template_task_id, ${row.templateTaskId}::uuid),
+            -- An open mission in the file is open now: one deleted in the app
+            -- (hidden) is shown again.
+            is_hidden = CASE WHEN ${row.status !== "closed"} THEN false ELSE is_hidden END,
             updated_at = now()
           WHERE id = ${missionId}
             AND type = 'mission'
@@ -3407,17 +3430,21 @@ export async function importMissionHistoryAction(
         }
       }
 
-      // Open-missions exports carry no checks: a new open mission gets its
-      // scheduled mission's checklists, unanswered, and one that already
-      // exists keeps whatever progress was made on it.
+      // Open-missions exports carry no checks: an open mission without
+      // checklists gets its scheduled mission's, unanswered, and one that
+      // already has checklists keeps whatever progress was made on it.
       const keepsTemplateChecklists = isOpenRow && row.checklistItems.length === 0;
       if (keepsTemplateChecklists) {
-        if (row.classification === "create" && row.templateTaskId) {
+        if (row.templateTaskId) {
           queries.push(sql`
             WITH source AS (
               SELECT id AS source_id, gen_random_uuid() AS id, title, sort_order
               FROM task_checklists
               WHERE task_id = ${row.templateTaskId}
+                AND NOT EXISTS (
+                  SELECT 1 FROM task_checklists existing
+                  WHERE existing.task_id = ${missionId}
+                )
             ),
             inserted_checklists AS (
               INSERT INTO task_checklists (id, task_id, title, sort_order)
@@ -3432,18 +3459,25 @@ export async function importMissionHistoryAction(
               FROM checklist_locations cl
               INNER JOIN source ON source.source_id = cl.task_checklist_id
               RETURNING task_checklist_id
+            ),
+            source_items AS (
+              SELECT item.*, gen_random_uuid() AS new_id, source.id AS new_checklist_id
+              FROM task_checklist_items item
+              INNER JOIN source ON source.source_id = item.task_checklist_id
             )
             INSERT INTO task_checklist_items (
               id, task_checklist_id, label, sort_order, item_type,
               field_type_original, is_required, number_unit, number_rule,
-              number_min, number_max, options
+              number_min, number_max, options, show_if_item_id, show_if_values
             )
             SELECT
-              gen_random_uuid(), source.id, item.label, item.sort_order, item.item_type,
+              item.new_id, item.new_checklist_id, item.label, item.sort_order, item.item_type,
               item.field_type_original, item.is_required, item.number_unit, item.number_rule,
-              item.number_min, item.number_max, item.options
-            FROM task_checklist_items item
-            INNER JOIN source ON source.source_id = item.task_checklist_id
+              item.number_min, item.number_max, item.options,
+              parent.new_id,
+              CASE WHEN parent.new_id IS NULL THEN '[]'::jsonb ELSE item.show_if_values END
+            FROM source_items item
+            LEFT JOIN source_items parent ON parent.id = item.show_if_item_id
           `);
         }
       } else {
