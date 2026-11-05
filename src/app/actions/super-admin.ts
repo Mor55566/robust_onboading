@@ -67,6 +67,7 @@ import {
 import { isVisittUser, type UserImportRow } from "@/lib/user-import";
 import type { FloorImportRow } from "@/lib/data-import";
 import { importAreasAction } from "@/app/actions/admin-shared";
+import { syncTemplateChecklistsViaApi } from "@/lib/missions-cron";
 import type { AreaImportRow } from "@/lib/area-import";
 import {
   resolveAutomationImportRows,
@@ -812,6 +813,127 @@ export async function deleteTicketsAction(
   return {
     success: t(dict.superAdmin.deleteTicketsSuccess, { count: validIds.length }),
     deleted: validIds.length,
+  };
+}
+
+export type DeletableMission = {
+  id: string;
+  name: string;
+};
+
+export async function getDeletableMissionsAction(complexId: string): Promise<{
+  error?: string;
+  missions?: DeletableMission[];
+}> {
+  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
+  if (user.role !== "super_admin") {
+    return { error: dict.errors.unauthorized };
+  }
+
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) {
+    return { error: dict.admin.complexNotFound };
+  }
+
+  const rows = await sql`
+    SELECT
+      t.id,
+      t.title,
+      t.description
+    FROM tasks t
+    JOIN buildings b ON b.id = t.building_id
+    WHERE t.type = 'template-mission'
+      AND t.is_hidden IS NOT TRUE
+      AND b.complex_id = ${scopedComplexId}
+    ORDER BY t.title ASC NULLS LAST, t.created_at DESC, t.id DESC
+  `;
+
+  return {
+    missions: rows.map((row) => ({
+      id: row.id as string,
+      name:
+        ((row.title as string | null) ?? "").trim() ||
+        ((row.description as string | null) ?? "").trim() ||
+        (row.id as string),
+    })),
+  };
+}
+
+export async function deleteMissionsAction(
+  complexId: string,
+  missionIds: string[],
+): Promise<{
+  error?: string;
+  success?: string;
+  deleted?: number;
+}> {
+  const [user, dict] = await Promise.all([requireUser(), getDictionary()]);
+  if (user.role !== "super_admin") {
+    return { error: dict.errors.unauthorized };
+  }
+
+  const scopedComplexId = await resolveImportComplexId(complexId);
+  if (!scopedComplexId) {
+    return { error: dict.admin.complexNotFound };
+  }
+
+  const parsed = z.array(z.string().uuid()).min(1).max(10_000).safeParse(missionIds);
+  if (!parsed.success) {
+    return { error: dict.errors.invalidInput };
+  }
+  const ids = [...new Set(parsed.data)];
+
+  const templates = await sql`
+    SELECT t.id
+    FROM tasks t
+    JOIN buildings b ON b.id = t.building_id
+    WHERE t.id = ANY(${ids}::uuid[])
+      AND t.type = 'template-mission'
+      AND t.is_hidden IS NOT TRUE
+      AND b.complex_id = ${scopedComplexId}
+  `;
+  const templateIds = templates.map((row) => row.id as string);
+  if (templateIds.length === 0) {
+    return { error: dict.superAdmin.deleteMissionsNoneSelected };
+  }
+
+  // tasks can't be deleted by app_user (no DELETE privilege), so missions are
+  // hidden — the same way the app itself removes a mission — and their
+  // schedules paused so no new occurrences are generated. Occurrences
+  // (history and open missions) are left as they are.
+  try {
+    await sql.transaction([
+      sql`
+        UPDATE mission_schedules
+        SET paused_at = COALESCE(paused_at, now()), updated_at = now()
+        WHERE template_mission_id = ANY(${templateIds}::uuid[])
+      `,
+      sql`
+        UPDATE tasks
+        SET is_hidden = true, updated_at = now()
+        WHERE id = ANY(${templateIds}::uuid[])
+          AND type = 'template-mission'
+      `,
+    ]);
+  } catch (error) {
+    console.error("deleteMissionsAction failed:", error);
+    const dbError = error as { message?: string; detail?: string };
+    const detail = dbError.detail || dbError.message;
+    return {
+      error: detail
+        ? `${dict.superAdmin.deleteMissionsFailed} (${detail})`
+        : dict.superAdmin.deleteMissionsFailed,
+    };
+  }
+
+  revalidatePath("/");
+  revalidatePath("/missions");
+  revalidatePath("/scheduled-missions");
+  revalidatePath("/profile");
+
+  return {
+    success: t(dict.superAdmin.deleteMissionsSuccess, { count: templateIds.length }),
+    deleted: templateIds.length,
   };
 }
 
@@ -2779,6 +2901,9 @@ export async function importScheduledMissionsAction(
             title = ${row.title},
             description = ${row.description},
             recurrence_period_start = ${row.startDate}::timestamptz,
+            -- A mission in the file is wanted: one hidden earlier ("delete
+            -- missions" in onboarding, or deleted in the app) is shown again.
+            is_hidden = false,
             updated_at = COALESCE(${row.createdAt}::timestamptz, now())
           WHERE id = ${missionId}
             AND type = 'template-mission'
@@ -2895,14 +3020,18 @@ export async function importScheduledMissionsAction(
           if (checklist.locations.length > 0) {
             queries.push(sql`
               INSERT INTO checklist_locations (
-                task_checklist_id, building_id, floor_id, area_id
+                task_checklist_id, building_id, floor_id, area_id,
+                equipment_id, label, sort_order
               )
-              SELECT ${checklistId}, x.building_id, x.floor_id, x.area_id
+              SELECT ${checklistId}, x.building_id, x.floor_id, x.area_id,
+                x.equipment_id, x.label, x.ord - 1
               FROM unnest(
                 ${checklist.locations.map((location) => location.buildingId)}::uuid[],
                 ${checklist.locations.map((location) => location.floorId)}::uuid[],
-                ${checklist.locations.map((location) => location.areaId)}::uuid[]
-              ) AS x(building_id, floor_id, area_id)
+                ${checklist.locations.map((location) => location.areaId)}::uuid[],
+                ${checklist.locations.map((location) => location.equipmentId)}::uuid[],
+                ${checklist.locations.map((location) => location.label)}::text[]
+              ) WITH ORDINALITY AS x(building_id, floor_id, area_id, equipment_id, label, ord)
             `);
           }
           // A conditional item points at the item with the controlling
@@ -3322,8 +3451,11 @@ export async function importMissionHistoryAction(
     title: string;
     action: "create" | "update";
     queries: ReturnType<typeof sql>[];
+    /** Copy the scheduled mission's checklists in once the row is written. */
+    templateSync: { missionId: string; templateId: string } | null;
   };
   const pending: PendingRow[] = [];
+  const templateSyncs: PendingRow[] = [];
   const failures: MissionHistoryImportFailure[] = [];
   let created = 0;
   let updated = 0;
@@ -3333,6 +3465,7 @@ export async function importMissionHistoryAction(
   function countWritten(row: PendingRow) {
     if (row.action === "create") created += 1;
     else updated += 1;
+    if (row.templateSync) templateSyncs.push(row);
   }
 
   async function flushPending() {
@@ -3374,7 +3507,7 @@ export async function importMissionHistoryAction(
 
       const queries: ReturnType<typeof sql>[] = [];
       const missionId = row.existingMissionId ?? crypto.randomUUID();
-      const description = row.note.trim();
+      const description = row.note || row.title;
 
       if (row.classification === "update") {
         queries.push(sql`
@@ -3387,10 +3520,6 @@ export async function importMissionHistoryAction(
             resolved_at = ${row.status === "closed" ? (row.closedAt ?? row.dueAt) : null}::timestamptz,
             resolved_by_user_id = ${row.status === "closed" ? row.resolvedByUserId : null},
             due_at = ${row.dueAt}::timestamptz,
-            template_task_id = COALESCE(template_task_id, ${row.templateTaskId}::uuid),
-            -- An open mission in the file is open now: one deleted in the app
-            -- (hidden) is shown again.
-            is_hidden = CASE WHEN ${row.status !== "closed"} THEN false ELSE is_hidden END,
             updated_at = now()
           WHERE id = ${missionId}
             AND type = 'mission'
@@ -3430,55 +3559,16 @@ export async function importMissionHistoryAction(
         }
       }
 
-      // Open-missions exports carry no checks: an open mission without
-      // checklists gets its scheduled mission's, unanswered, and one that
-      // already has checklists keeps whatever progress was made on it.
+      // Open-missions exports carry no checks: the open mission gets its
+      // scheduled mission's checklists, unanswered, from missions_cron — the
+      // same copy every spawned mission gets (equipment and Visitt path of
+      // every stop included). One that already has checklists keeps them and
+      // their answers; its stops only get what they were copied without.
       const keepsTemplateChecklists = isOpenRow && row.checklistItems.length === 0;
+      let templateSync: PendingRow["templateSync"] = null;
       if (keepsTemplateChecklists) {
         if (row.templateTaskId) {
-          queries.push(sql`
-            WITH source AS (
-              SELECT id AS source_id, gen_random_uuid() AS id, title, sort_order
-              FROM task_checklists
-              WHERE task_id = ${row.templateTaskId}
-                AND NOT EXISTS (
-                  SELECT 1 FROM task_checklists existing
-                  WHERE existing.task_id = ${missionId}
-                )
-            ),
-            inserted_checklists AS (
-              INSERT INTO task_checklists (id, task_id, title, sort_order)
-              SELECT id, ${missionId}, title, sort_order FROM source
-              RETURNING id
-            ),
-            inserted_locations AS (
-              INSERT INTO checklist_locations (
-                task_checklist_id, building_id, floor_id, area_id
-              )
-              SELECT source.id, cl.building_id, cl.floor_id, cl.area_id
-              FROM checklist_locations cl
-              INNER JOIN source ON source.source_id = cl.task_checklist_id
-              RETURNING task_checklist_id
-            ),
-            source_items AS (
-              SELECT item.*, gen_random_uuid() AS new_id, source.id AS new_checklist_id
-              FROM task_checklist_items item
-              INNER JOIN source ON source.source_id = item.task_checklist_id
-            )
-            INSERT INTO task_checklist_items (
-              id, task_checklist_id, label, sort_order, item_type,
-              field_type_original, is_required, number_unit, number_rule,
-              number_min, number_max, options, show_if_item_id, show_if_values
-            )
-            SELECT
-              item.new_id, item.new_checklist_id, item.label, item.sort_order, item.item_type,
-              item.field_type_original, item.is_required, item.number_unit, item.number_rule,
-              item.number_min, item.number_max, item.options,
-              parent.new_id,
-              CASE WHEN parent.new_id IS NULL THEN '[]'::jsonb ELSE item.show_if_values END
-            FROM source_items item
-            LEFT JOIN source_items parent ON parent.id = item.show_if_item_id
-          `);
+          templateSync = { missionId, templateId: row.templateTaskId };
         }
       } else {
         queries.push(sql`
@@ -3546,6 +3636,7 @@ export async function importMissionHistoryAction(
         title: row.title,
         action: row.classification,
         queries,
+        templateSync,
       });
       if (pending.reduce((sum, item) => sum + item.queries.length, 0) >= CHUNK) {
         await flushPending();
@@ -3553,6 +3644,31 @@ export async function importMissionHistoryAction(
     }
 
     await flushPending();
+
+    // After the rows exist: missions_cron copies each one's checklists.
+    const SYNC_CONCURRENCY = 4;
+    for (let index = 0; index < templateSyncs.length; index += SYNC_CONCURRENCY) {
+      const group = templateSyncs.slice(index, index + SYNC_CONCURRENCY);
+      const results = await Promise.all(
+        group.map((row) =>
+          syncTemplateChecklistsViaApi(row.templateSync!.missionId, row.templateSync!.templateId),
+        ),
+      );
+      results.forEach((result, position) => {
+        if (!("error" in result)) return;
+        const row = group[position]!;
+        console.error("importMissionHistoryAction checklist sync failed", {
+          rowNumber: row.rowNumber,
+          externalId: row.externalId,
+          error: result.error,
+        });
+        failures.push({
+          rowNumber: row.rowNumber,
+          label: `${row.externalId} · ${row.title}`,
+          error: `${dict.superAdmin.missionHistoryChecklistSyncFailed} (${result.error})`,
+        });
+      });
+    }
   } catch (error) {
     const databaseError = error as {
       code?: unknown;

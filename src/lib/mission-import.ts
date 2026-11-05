@@ -176,6 +176,48 @@ export function collapseLocationChecklistItems(
   return [...uniqueItems.values()];
 }
 
+/**
+ * One checklist row per location, the way the main app saves a mission: a
+ * Visitt card with five chillers becomes five rows that share the card's title
+ * and checks (the edit form merges them back into one card), each with its own
+ * location. Rows follow Visitt's "סדר" order when the file has it, otherwise
+ * card order and then location order within the card.
+ */
+export function missionChecklistSlots(
+  items: MissionImportChecklistItem[],
+): Array<{
+  title: string;
+  location: string | null;
+  items: MissionImportChecklistItem[];
+}> {
+  const slots = new Map<string, {
+    title: string;
+    location: string | null;
+    items: MissionImportChecklistItem[];
+    order: number;
+    index: number;
+  }>();
+  for (const item of items) {
+    const title = item.checklistTitle.trim() || "בדיקות";
+    const locations = item.locations?.length ? item.locations : [null];
+    for (const location of locations) {
+      const key = `${title}\u0000${location ?? ""}`;
+      let slot = slots.get(key);
+      if (!slot) {
+        slot = { title, location, items: [], order: Number.POSITIVE_INFINITY, index: slots.size };
+        slots.set(key, slot);
+      }
+      if (item.locationOrder != null && slot.order === Number.POSITIVE_INFINITY) {
+        slot.order = item.locationOrder;
+      }
+      slot.items.push(item);
+    }
+  }
+  return [...slots.values()]
+    .sort((left, right) => left.order - right.order || left.index - right.index)
+    .map(({ title, location, items: slotItems }) => ({ title, location, items: slotItems }));
+}
+
 export function groupMissionChecklistItems(
   items: MissionImportChecklistItem[],
 ): Array<{
@@ -907,6 +949,7 @@ function resolveMissionLocations(options: {
   buildingId: string | null;
   floorId: string | null;
   areaId: string | null;
+  equipmentId?: string | null;
 }> {
   const buildingCandidates = options.buildingNames
     .map((name) =>
@@ -921,6 +964,7 @@ function resolveMissionLocations(options: {
     buildingId: string;
     floorId: string | null;
     areaId: string | null;
+    equipmentId?: string | null;
   }> = [];
   const seen = new Set<string>();
 
@@ -935,6 +979,7 @@ function resolveMissionLocations(options: {
     buildingId: string;
     floorId: string | null;
     areaId: string | null;
+    equipmentId?: string | null;
   }) {
     const key = `${match.buildingId}:${match.floorId ?? ""}:${match.areaId ?? ""}`;
     if (!seen.has(key)) {
@@ -958,6 +1003,7 @@ function resolveMissionLocations(options: {
         buildingId: building.id,
         floorId: equipment.floor_id,
         areaId: equipment.area_id,
+        equipmentId: equipment.id,
       };
     }
     const resolved = resolveExistingEquipmentLocation(
@@ -997,7 +1043,9 @@ function resolveMissionLocations(options: {
       for (const building of order) {
         const match = matchInBuilding(candidate, building);
         if (match) {
-          pushLocation(match);
+          // Equipment only counts for the full path: an ancestor's leaf is a
+          // room, not this location's equipment.
+          pushLocation(candidate === location ? match : { ...match, equipmentId: null });
           matched = true;
           break;
         }
@@ -1042,6 +1090,7 @@ export type ResolvedMissionImportRow = {
   startDate: string | null;
   createdAt: string | null;
   checklistItems: MissionImportChecklistItem[];
+  /** One checklist row per location (see missionChecklistSlots). */
   checklistGroups: Array<{
     title: string;
     items: MissionImportChecklistItem[];
@@ -1049,6 +1098,10 @@ export type ResolvedMissionImportRow = {
       buildingId: string;
       floorId: string | null;
       areaId: string | null;
+      /** The equipment the Visitt location names, when it exists here. */
+      equipmentId: string | null;
+      /** The location path exactly as Visitt wrote it. */
+      label: string | null;
     }>;
   }>;
 };
@@ -1116,30 +1169,33 @@ export function resolveMissionImportRows(options: {
       floorId: null,
       areaId: null,
     };
-    const checklistGroups = groupMissionChecklistItems(row.checklistItems).map(
-      (group) => ({
-        title: group.title,
-        items: group.items,
+    const checklistGroups = missionChecklistSlots(row.checklistItems).map((slot) => {
+      const match = slot.location
+        ? resolveMissionLocations({
+            locations: [slot.location],
+            buildingNames: row.buildings,
+            buildings: options.buildings,
+            buildingByName,
+            floorsByBuilding: options.floorsByBuilding,
+            areasByBuilding: options.areasByBuilding,
+            equipmentByBuilding: options.equipmentByBuilding,
+          })[0]
+        : null;
+      return {
+        title: slot.title,
+        items: slot.items,
         locations:
-          group.locations.length > 0
-            ? resolveMissionLocations({
-                locations: group.locations,
-                buildingNames: row.buildings,
-                buildings: options.buildings,
-                buildingByName,
-                floorsByBuilding: options.floorsByBuilding,
-                areasByBuilding: options.areasByBuilding,
-                equipmentByBuilding: options.equipmentByBuilding,
-              }).filter(
-                (location): location is {
-                  buildingId: string;
-                  floorId: string | null;
-                  areaId: string | null;
-                } => location.buildingId !== null,
-              )
+          slot.location && match?.buildingId
+            ? [{
+                buildingId: match.buildingId,
+                floorId: match.floorId,
+                areaId: match.areaId,
+                equipmentId: match.equipmentId ?? null,
+                label: slot.location,
+              }]
             : [],
-      }),
-    );
+      };
+    });
 
     const categoryKey = row.category ? normalizeLookup(row.category) : "";
     let resolvedCategoryName: string | null = null;
@@ -1184,7 +1240,7 @@ export function resolveMissionImportRows(options: {
       rowNumber: row.rowNumber,
       externalId: row.externalId,
       title: row.title,
-      description: row.description.trim(),
+      description: row.description.trim() || row.title,
       schedule: parseMissionFrequency(row.frequency),
       skipHolidays: row.skipHolidays,
       isPaused: row.isPaused,

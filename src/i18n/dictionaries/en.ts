@@ -73,6 +73,18 @@ export const en = {
     deleteTicketsSuccess: "Deleted {count} tickets",
     deleteTicketsFailed: "Could not delete the selected tickets. Please try again.",
     deleteTicketsCloudinaryHint: "All attached images and files will also be permanently deleted.",
+    deleteMissions: "Delete missions",
+    deleteMissionsTitle: "Delete scheduled missions",
+    deleteMissionsHint: "Hide scheduled missions from the complex's mission management. Their schedules are paused; history and open missions are not changed.",
+    deleteMissionsSubtitle: "Select the scheduled missions you want to delete.",
+    deleteMissionsEmpty: "There are no scheduled missions to delete.",
+    deleteMissionsLoading: "Loading missions…",
+    deleteMissionsNoneSelected: "Select at least one mission.",
+    deleteMissionsConfirm: "Delete selected missions",
+    deleteMissionsAreYouSure: "Are you sure you want to delete {count} selected scheduled missions? They will be hidden from mission management and their schedules paused.",
+    deleteMissionsYesDelete: "Yes, delete missions",
+    deleteMissionsSuccess: "Deleted {count} scheduled missions",
+    deleteMissionsFailed: "Could not delete the selected missions. Please try again.",
     uploadTitle: "Upload tasks",
     uploadSubtitle:
       "Download the template, fill in your tasks, then upload the file. Extra columns from Visitt exports are ignored. Supported: description, urgency, status, created date, due date, building, location, category, subcategory, call number, reporter, assignees, opening images, solution images, solution text, close date, and closed by. Image URL columns (תמונות הקריאה / תמונות התיקון) are downloaded and stored in your Cloudinary account.",
@@ -238,6 +250,7 @@ export const en = {
     missionHistoryUploadMissingRequired:
       "Could not find required columns (מזהה and משימה). Use the template or a Visitt export.",
     missionHistoryUploadInvalidRow: "Some rows are missing מזהה or משימה.",
+    missionHistoryChecklistSyncFailed: "Copying the scheduled mission's checklists failed",
     missionHistoryUploadSuccess:
       "Imported {created} new, updated {updated}, skipped {skipped}",
     missionHistoryUnmatchedTitle:

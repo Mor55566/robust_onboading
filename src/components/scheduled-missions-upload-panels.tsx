@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
+  deleteMissionsAction,
+  getDeletableMissionsAction,
+  type DeletableMission,
   importMissionHistoryAction,
   importScheduledMissionsAction,
   previewMissionHistoryImportAction,
@@ -54,6 +58,11 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
   } | null>(null);
   const [historyUploadOpen, setHistoryUploadOpen] = useState(false);
   const [historyMessage, setHistoryMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<{
     type: "success" | "error";
     text: string;
   } | null>(null);
@@ -440,6 +449,300 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
           handleHistoryImport(rows, reportProgress, setOpenMessage)
         }
       />
+
+      <UploadMessage message={deleteMessage} />
+
+      <section className="surface-card space-y-4 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h2 className="text-base font-semibold">
+              {dict.superAdmin.deleteMissionsTitle}
+            </h2>
+            <p className="text-sm text-[var(--text-muted)]">
+              {dict.superAdmin.deleteMissionsHint}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-danger shrink-0"
+            disabled={!complexId}
+            onClick={() => {
+              setDeleteMessage(null);
+              setDeleteOpen(true);
+            }}
+          >
+            {dict.superAdmin.deleteMissions}
+          </button>
+        </div>
+      </section>
+
+      <DeleteMissionsModal
+        open={deleteOpen && !!complexId}
+        complexId={complexId}
+        dict={dict}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={(text) => {
+          setDeleteOpen(false);
+          setDeleteMessage({ type: "success", text });
+          void refreshUploadStatus();
+        }}
+      />
     </div>
+  );
+}
+
+function plainMissionName(value: string) {
+  const element = typeof document === "undefined" ? null : document.createElement("div");
+  if (!element) return value;
+  element.innerHTML = value;
+  return element.textContent?.trim() || value;
+}
+
+function DeleteMissionsModal({
+  open,
+  complexId,
+  dict,
+  onClose,
+  onDeleted,
+}: {
+  open: boolean;
+  complexId: string | null;
+  dict: Dictionary;
+  onClose: () => void;
+  onDeleted: (message: string) => void;
+}) {
+  const [missions, setMissions] = useState<DeletableMission[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    void Promise.resolve()
+      .then(() => {
+        if (!active) return null;
+        setLoading(true);
+        setError(null);
+        setSelected(new Set());
+        setConfirming(false);
+        return getDeletableMissionsAction(complexId ?? "");
+      })
+      .then((result) => {
+        if (!active || !result) return;
+        if (result.error) setError(result.error);
+        setMissions(result.missions ?? []);
+      })
+      .catch(() => {
+        if (active) setError(dict.superAdmin.deleteMissionsFailed);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, complexId, dict.superAdmin.deleteMissionsFailed]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !deleting) {
+        if (confirming) setConfirming(false);
+        else onClose();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, deleting, confirming, onClose]);
+
+  if (!open || typeof document === "undefined") return null;
+
+  const allSelected =
+    missions.length > 0 && missions.every((mission) => selected.has(mission.id));
+
+  function toggleSelectAll() {
+    setConfirming(false);
+    setError(null);
+    setSelected(
+      allSelected ? new Set() : new Set(missions.map((mission) => mission.id)),
+    );
+  }
+
+  async function handleDelete() {
+    if (selected.size === 0) {
+      setError(dict.superAdmin.deleteMissionsNoneSelected);
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    try {
+      const result = await deleteMissionsAction(complexId ?? "", [...selected]);
+      if (result.error) {
+        setError(result.error);
+        setConfirming(false);
+        return;
+      }
+      onDeleted(
+        result.success ??
+          t(dict.superAdmin.deleteMissionsSuccess, {
+            count: result.deleted ?? selected.size,
+          }),
+      );
+    } catch {
+      setError(dict.superAdmin.deleteMissionsFailed);
+      setConfirming(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-end justify-center p-0 sm:items-center sm:p-6">
+      <button
+        type="button"
+        aria-label={dict.common.close}
+        className="absolute inset-0 bg-black/45 backdrop-blur-[2px]"
+        onClick={deleting ? undefined : onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-missions-title"
+        className="surface-card relative z-10 flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl pb-[env(safe-area-inset-bottom)] shadow-xl sm:rounded-2xl"
+      >
+        <div className="shrink-0 border-b bg-[var(--surface)] px-5 py-5 sm:px-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 id="delete-missions-title" className="text-lg font-semibold">
+                {dict.superAdmin.deleteMissionsTitle}
+              </h2>
+              <p className="mt-1 text-sm text-[var(--text-muted)]">
+                {dict.superAdmin.deleteMissionsSubtitle}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="flex size-9 shrink-0 items-center justify-center rounded-full text-[var(--text-muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--text)]"
+              onClick={onClose}
+              disabled={deleting}
+              aria-label={dict.common.close}
+            >
+              <span aria-hidden="true" className="text-xl leading-none">×</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
+          {loading ? (
+            <p className="py-8 text-center text-sm text-[var(--text-muted)]">
+              {dict.superAdmin.deleteMissionsLoading}
+            </p>
+          ) : missions.length === 0 ? (
+            <p className="py-8 text-center text-sm text-[var(--text-muted)]">
+              {dict.superAdmin.deleteMissionsEmpty}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3 rounded-xl border bg-[var(--surface-muted)] px-4 py-2.5">
+                <span className="text-xs font-medium text-[var(--text-muted)]">
+                  {t(dict.superAdmin.deleteTicketsSelected, { count: selected.size })}
+                </span>
+                <button
+                  type="button"
+                  className="rounded-lg px-2.5 py-1.5 text-sm font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={deleting}
+                  onClick={toggleSelectAll}
+                >
+                  {allSelected
+                    ? dict.superAdmin.deleteTicketsClearAll
+                    : dict.superAdmin.deleteTicketsSelectAll}
+                </button>
+              </div>
+              <div className="space-y-2">
+                {missions.map((mission) => (
+                  <label
+                    key={mission.id}
+                    className="flex cursor-pointer items-start gap-3 rounded-xl border bg-[var(--surface)] px-4 py-3 hover:bg-[var(--surface-muted)]"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 rounded accent-[var(--danger)]"
+                      checked={selected.has(mission.id)}
+                      disabled={deleting}
+                      onChange={(event) => {
+                        setConfirming(false);
+                        setSelected((current) => {
+                          const next = new Set(current);
+                          if (event.target.checked) next.add(mission.id);
+                          else next.delete(mission.id);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="min-w-0 break-words text-sm font-medium">
+                      {plainMissionName(mission.name)}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="shrink-0 border-t bg-[var(--surface)] px-5 py-4 sm:px-6">
+          {error ? <p className="mb-3 banner-error" role="alert">{error}</p> : null}
+          {confirming ? (
+            <div className="space-y-3">
+              <p className="text-sm font-medium leading-relaxed text-[var(--danger)]" role="alert">
+                {t(dict.superAdmin.deleteMissionsAreYouSure, { count: selected.size })}
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={deleting}
+                  onClick={() => setConfirming(false)}
+                >
+                  {dict.common.cancel}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={deleting}
+                  onClick={() => void handleDelete()}
+                >
+                  {deleting
+                    ? dict.superAdmin.deleteTicketsDeleting
+                    : dict.superAdmin.deleteMissionsYesDelete}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-[var(--text-muted)]">
+                  {t(dict.superAdmin.deleteTicketsSelected, { count: selected.size })}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={selected.size === 0 || loading}
+                  onClick={() => {
+                    setError(null);
+                    setConfirming(true);
+                  }}
+                >
+                  {dict.superAdmin.deleteMissionsConfirm}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

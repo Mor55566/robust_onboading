@@ -75,6 +75,18 @@ export const he: Dictionary = {
     deleteTicketsSuccess: "נמחקו {count} קריאות",
     deleteTicketsFailed: "לא ניתן למחוק את הקריאות שנבחרו. נסו שוב.",
     deleteTicketsCloudinaryHint: "כל התמונות והקבצים המצורפים יימחקו גם הם לצמיתות.",
+    deleteMissions: "מחיקת משימות",
+    deleteMissionsTitle: "מחיקת משימות מתוזמנות",
+    deleteMissionsHint: "הסתרת משימות מתוזמנות מניהול המשימות של המתחם. לוח הזמנים שלהן מושהה, וההיסטוריה והמשימות הפתוחות לא משתנות.",
+    deleteMissionsSubtitle: "בחרו את המשימות המתוזמנות שברצונכם למחוק.",
+    deleteMissionsEmpty: "אין משימות מתוזמנות למחיקה.",
+    deleteMissionsLoading: "טוען משימות…",
+    deleteMissionsNoneSelected: "יש לבחור לפחות משימה אחת.",
+    deleteMissionsConfirm: "מחיקת המשימות שנבחרו",
+    deleteMissionsAreYouSure: "האם למחוק את {count} המשימות המתוזמנות שנבחרו? הן יוסתרו מניהול המשימות ולוח הזמנים שלהן יושהה.",
+    deleteMissionsYesDelete: "כן, למחוק את המשימות",
+    deleteMissionsSuccess: "נמחקו {count} משימות מתוזמנות",
+    deleteMissionsFailed: "לא ניתן למחוק את המשימות שנבחרו. נסו שוב.",
     uploadTitle: "העלאת קריאות",
     uploadSubtitle:
       "הורידו את התבנית, מלאו את הקריאות, והעלו את הקובץ. עמודות נוספות מייצוא Visitt יתעלמו. נתמך: תיאור, דחיפות, סטאטוס, תאריך יצירה, תאריך אחרון לטיפול, בניין, מיקום, קטגוריה, תת קטגוריה, מספר קריאה, מדווח, משתמש משויך, תמונות הקריאה, תמונות התיקון, פתרון, תאריך סגירה ונסגר ע״י. כתובות תמונה בעמודות תמונות הקריאה / תמונות התיקון מורדות ונשמרות בחשבון ה-Cloudinary שלכם.",
@@ -239,6 +251,7 @@ export const he: Dictionary = {
     missionHistoryUploadMissingRequired:
       "לא נמצאו עמודות חובה (מזהה ומשימה). השתמשו בתבנית או בייצוא Visitt.",
     missionHistoryUploadInvalidRow: "בחלק מהשורות חסרים מזהה או משימה.",
+    missionHistoryChecklistSyncFailed: "העתקת הצ׳קליסטים מהמשימה המתוזמנת נכשלה",
     missionHistoryUploadSuccess:
       "יובאו {created} חדשות, עודכנו {updated}, דולגו {skipped}",
     missionHistoryUnmatchedTitle:

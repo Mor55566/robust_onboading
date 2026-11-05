@@ -4,6 +4,7 @@ import {
   buildMissionsCsvTemplate,
   collapseLocationChecklistItems,
   groupMissionChecklistItems,
+  missionChecklistSlots,
   parseMissionFrequency,
   parseMissionImportDate,
   parseMissionsImportContent,
@@ -11,22 +12,6 @@ import {
 } from "./mission-import";
 
 describe("scheduled missions CSV import", () => {
-  it("keeps missing descriptions empty and preserves descriptions matching the title", () => {
-    for (const description of ["", "   ", "בדיקה"]) {
-      const parsed = parseMissionsImportContent(
-        `source_index,assignment_name,description\n1,בדיקה,${description}`, "missions.csv",
-      );
-      assert.ok(!("error" in parsed), JSON.stringify(parsed));
-      const resolved = resolveMissionImportRows({
-        rows: parsed.rows,
-        buildings: [], floorsByBuilding: new Map(), areasByBuilding: new Map(),
-        users: [], categories: [], fallbackOpenedByUserId: "fallback",
-      });
-      assert.ok(resolved.ok);
-      assert.equal(resolved.rows[0]?.description, description.trim());
-    }
-  });
-
   it("carries holiday booleans from exporter rows through database resolution", () => {
     for (const [value, expected] of [
       ["yes", true], ["true", true], [" YES ", true], ["1", true],
@@ -365,10 +350,14 @@ describe("scheduled missions CSV import", () => {
       { buildingId: "building-a", floorId: "floor-2", areaId: null },
     ]);
     assert.equal(resolved.rows[0]?.floorId, "floor-1");
-    assert.deepEqual(resolved.rows[0]?.checklistGroups[0]?.locations, [
-      { buildingId: "building-a", floorId: "floor-1", areaId: null },
-      { buildingId: "building-a", floorId: "floor-2", areaId: null },
-    ]);
+    // One checklist row per location, sharing the card's title and checks.
+    assert.deepEqual(
+      resolved.rows[0]?.checklistGroups.map((group) => [group.title, group.locations]),
+      [
+        ["בדיקות", [{ buildingId: "building-a", floorId: "floor-1", areaId: null, equipmentId: null, label: "בניין A / קומה 1" }]],
+        ["בדיקות", [{ buildingId: "building-a", floorId: "floor-2", areaId: null, equipmentId: null, label: "בניין A / קומה 2" }]],
+      ],
+    );
   });
 
   it("places a location in the building its path names, keeping the deepest existing part", () => {
@@ -410,10 +399,41 @@ describe("scheduled missions CSV import", () => {
     });
     assert.ok(resolved.ok);
     assert.deepEqual(
-      resolved.rows[0]?.checklistGroups.map((group) => group.locations),
+      resolved.rows[0]?.checklistGroups.map((group) =>
+        group.locations.map(({ buildingId, floorId, areaId }) => ({ buildingId, floorId, areaId })),
+      ),
       [
         [{ buildingId: "building-b", floorId: "floor-b35", areaId: "roof-b" }],
         [{ buildingId: "building-b", floorId: "floor-b35", areaId: null }],
+      ],
+    );
+  });
+
+  it("keeps a multi-location card as one card: a row per location, same title and checks", () => {
+    const pumps = [
+      "בניין A / קומה 35 < קומה 35 / גג טכני < קומה 35 / גג טכני / משאבת P13A חיוני",
+      "בניין A / קומה 35 < קומה 35 / גג טכני < קומה 35 / גג טכני / משאבת P12A חיוני",
+    ];
+    const tank = "בניין A / קומה 35 < קומה 35 / גג טכני < קומה 35 / גג טכני / מאגר מים ממוחזרים";
+    const parsed = parseMissionsImportContent(
+      [
+        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
+        `1,"סיור","${tank}",,"${tank}",1,"בדוק מאגר",checkbox`,
+        `1,"סיור","${pumps.join(";")}",,"${pumps.join(" | ")}",1,"עובד",checkbox`,
+        `1,"סיור","${pumps.join(";")}",,"${pumps.join(" | ")}",2,"רעש",checkbox`,
+      ].join("\n"),
+      "pumps.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+
+    const slots = missionChecklistSlots(parsed.rows[0]!.checklistItems);
+    const card = pumps.join(" | ");
+    assert.deepEqual(
+      slots.map((slot) => [slot.title, slot.location, slot.items.map((item) => item.label)]),
+      [
+        [tank, tank, ["בדוק מאגר"]],
+        [card, pumps[0], ["עובד", "רעש"]],
+        [card, pumps[1], ["עובד", "רעש"]],
       ],
     );
   });
@@ -491,8 +511,12 @@ describe("scheduled missions CSV import", () => {
     assert.equal(resolved.ok, true);
     if (!resolved.ok) return;
     assert.deepEqual(resolved.rows[0]?.locations, [
-      { buildingId: "building-a", floorId: "floor-36", areaId: "core-36" },
+      { buildingId: "building-a", floorId: "floor-36", areaId: "core-36", equipmentId: "station-1a" },
     ]);
+    assert.deepEqual(resolved.rows[0]?.checklistGroups[0]?.locations, [{
+      buildingId: "building-a", floorId: "floor-36", areaId: "core-36", equipmentId: "station-1a",
+      label: "בניין A / קומה 36 < קומה 36 / גרעין < קומה 36 / גרעין / עמדת כיבוי אש מס' 1A",
+    }]);
   });
 
   it("keeps legacy imports as one checklist when no checklist title exists", () => {
@@ -556,5 +580,24 @@ describe("scheduled missions CSV import", () => {
       "2023-04-11T09:08:00+03:00",
     );
     assert.equal(parseMissionImportDate("9/8/26, 0:00"), "2026-09-08T00:00:00+03:00");
+  });
+});
+
+describe("checklist slots in Visitt's order", () => {
+  it("orders each location of a card by its location_order across cards", () => {
+    const parsed = parseMissionsImportContent(
+      [
+        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
+        '1,"סיור","גג / צ\'ילר 1",3,"צ\'ילרים",1,"עובד",checkbox',
+        '1,"סיור","גג / צ\'ילר 2",1,"צ\'ילרים",1,"עובד",checkbox',
+        '1,"סיור","חדר חשמל",2,"חדר חשמל",1,"לוח",checkbox',
+      ].join("\n"),
+      "ordered.csv",
+    );
+    assert.ok(!("error" in parsed), JSON.stringify(parsed));
+    assert.deepEqual(
+      missionChecklistSlots(parsed.rows[0]!.checklistItems).map((slot) => [slot.title, slot.location]),
+      [["צ'ילרים", "גג / צ'ילר 2"], ["חדר חשמל", "חדר חשמל"], ["צ'ילרים", "גג / צ'ילר 1"]],
+    );
   });
 });

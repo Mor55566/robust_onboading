@@ -822,9 +822,11 @@ export const MISSION_EXPORT_SCRIPT = `/*
         }];
       }
 
+      // Every location keeps its card's title (all of the card's locations),
+      // so the upload can keep the card together while ordering each stop.
       return section.locations.map((location) => ({
         section,
-        title: location,
+        title: section.locations.join(' | '),
         locations: [location],
         order: findSiteOrder(location, siteOrder),
       }));

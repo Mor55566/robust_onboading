@@ -560,10 +560,10 @@ function DeleteTicketsModal({
               </div>
             </div>
           )}
-          {error ? <p className="mt-3 banner-error" role="alert">{error}</p> : null}
         </div>
 
         <div className="shrink-0 border-t bg-[var(--surface)] px-5 py-4 sm:px-6">
+          {error ? <p className="mb-3 banner-error" role="alert">{error}</p> : null}
           {confirming ? (
             <div className="space-y-3">
               <p className="text-sm font-medium leading-relaxed text-[var(--danger)]" role="alert">
