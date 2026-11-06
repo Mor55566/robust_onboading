@@ -538,15 +538,16 @@ describe("document attachment import", () => {
   it("flags files the export could not download for a manual upload", () => {
     const parsed = parseFileAttachmentsImportContent(
       `external_id,version,attachment_index,file_name,mime_type,storage_url,needs_manual_upload
-"doc-1","1","1","[MANUAL_UPLOAD] Excel","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","","Excel"
+"doc-1","1","1","[MANUAL_UPLOAD] Excel","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","unone_file.unone","Excel"
 "doc-1","1","2","photo.jpeg","image/jpeg","https://res.cloudinary.com/gantzi/image/upload/photo.jpeg",""
 "doc-2","1","1","[MANUAL_UPLOAD] Word","","",""
+"doc-3","1","1","","","unone_file.unone",""
 `,
       "documents_export.csv",
     );
     assert.equal("rows" in parsed, true);
     if (!("rows" in parsed)) return;
-    assert.equal(parsed.rows.length, 2);
+    assert.equal(parsed.rows.length, 3);
     assert.equal(parsed.rows[0]?.attachments.length, 1);
     assert.deepEqual(parsed.rows[0]?.rejectedAttachments, [
       { rowNumber: 2, url: "", manualFileType: "Excel" },
@@ -554,6 +555,10 @@ describe("document attachment import", () => {
     assert.equal(parsed.rows[1]?.attachments.length, 0);
     assert.deepEqual(parsed.rows[1]?.rejectedAttachments, [
       { rowNumber: 4, url: "", manualFileType: "Word" },
+    ]);
+    assert.equal(parsed.rows[2]?.attachments.length, 0);
+    assert.deepEqual(parsed.rows[2]?.rejectedAttachments, [
+      { rowNumber: 5, url: "", manualFileType: "?" },
     ]);
   });
 

@@ -310,6 +310,113 @@ export const DOCUMENT_FILES_EXPORT_SCRIPT = `(async () => {
       );
     };
 
+    const MANUAL_UPLOAD_MARKER =
+      'MANUAL_UPLOAD';
+
+    // storage_url written for a file the script cannot download (an Excel
+    // shown only as an icon, or any thumbnail it does not recognize). The
+    // import reports these as "not uploaded" so they get fixed by hand.
+    const UNKNOWN_FILE_URL =
+      'unone_file.unone';
+
+    const MIME_BY_ICON = {
+      excel:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      word:
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      powerpoint:
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      pdf: 'application/pdf',
+      csv: 'text/csv',
+      video: 'video/mp4',
+      zip: 'application/zip'
+    };
+
+    const getMimeTypeForIcon = fileType =>
+      MIME_BY_ICON[
+        String(fileType).toLowerCase()
+      ] || 'application/octet-stream';
+
+    // Every thumbnail of a file item: an <img> preview (images, PDFs) or,
+    // for files with no preview, just an icon such as "#Excel_20x20".
+    const getAttachmentThumbnails = item => {
+      const carousel =
+        item.querySelector(
+          '[data-test-id="media-thumbnails-with-carousel"]'
+        );
+
+      if (!carousel) {
+        return [];
+      }
+
+      let thumbnails =
+        Array.from(
+          carousel.querySelectorAll(
+            '[data-test-id^="media-thumbnails-with-carousel__thumbnail-"]'
+          )
+        );
+
+      if (!thumbnails.length) {
+        thumbnails =
+          Array.from(
+            carousel.querySelectorAll('img')
+          );
+      }
+
+      return thumbnails
+        .map(thumbnail => {
+          const img =
+            thumbnail.tagName === 'IMG'
+              ? thumbnail
+              : thumbnail.querySelector('img');
+
+          if (img?.src) {
+            return {
+              kind: 'image',
+              url: img.src
+            };
+          }
+
+          const backgroundUrl =
+            Array.from(
+              thumbnail.querySelectorAll('[style*="background-image"]')
+            )
+              .map(el =>
+                el.style.backgroundImage.match(
+                  /url\\(["']?(.+?)["']?\\)/
+                )?.[1]
+              )
+              .find(Boolean);
+
+          if (backgroundUrl) {
+            return {
+              kind: 'image',
+              url: backgroundUrl
+            };
+          }
+
+          const iconHref =
+            thumbnail
+              .querySelector('use')
+              ?.getAttribute('href') ||
+            thumbnail
+              .querySelector('use')
+              ?.getAttribute('xlink:href') ||
+            '';
+
+          const fileType =
+            iconHref
+              .replace(/^#/, '')
+              .replace(/_\\d+x\\d+$/, '') ||
+            'Unknown';
+
+          return {
+            kind: 'icon',
+            fileType
+          };
+        });
+    };
+
     const extractFileItem = ({
       item,
       externalId,
@@ -340,29 +447,30 @@ export const DOCUMENT_FILES_EXPORT_SCRIPT = `(async () => {
         extractCreatedByName(item);
 
       const attachments =
-        Array.from(
-          item.querySelectorAll(
-            '[data-test-id="media-thumbnails-with-carousel"] img'
-          )
-        );
+        getAttachmentThumbnails(item);
+
+      const baseRow = {
+        external_id: externalId,
+        title,
+        tag_name: tagName,
+        linked_entity:
+          linkedEntity,
+        version,
+        source,
+        start_date:
+          startDate,
+        expiration_date:
+          expirationDate,
+        created_at:
+          createdAt,
+        created_by_name:
+          createdByName,
+        needs_manual_upload: ''
+      };
 
       if (!attachments.length) {
         return [{
-          external_id: externalId,
-          title,
-          tag_name: tagName,
-          linked_entity:
-            linkedEntity,
-          version,
-          source,
-          start_date:
-            startDate,
-          expiration_date:
-            expirationDate,
-          created_at:
-            createdAt,
-          created_by_name:
-            createdByName,
+          ...baseRow,
           attachment_index: '',
           file_name: '',
           mime_type: '',
@@ -371,30 +479,37 @@ export const DOCUMENT_FILES_EXPORT_SCRIPT = `(async () => {
       }
 
       return attachments.map(
-        (img, index) => {
+        (attachment, index) => {
+          if (attachment.kind === 'icon') {
+            // A file without a preview (Excel, Word…): the page has no URL
+            // to download it from, so flag it for a manual upload.
+            const fileType =
+              attachment.fileType;
+
+            return {
+              ...baseRow,
+              attachment_index:
+                index + 1,
+              file_name:
+                \`[\${MANUAL_UPLOAD_MARKER}] \${fileType}\`,
+              mime_type:
+                getMimeTypeForIcon(
+                  fileType
+                ),
+              storage_url:
+                UNKNOWN_FILE_URL,
+              needs_manual_upload:
+                fileType
+            };
+          }
+
           const storageUrl =
             toFullCloudinaryUrl(
-              img.src
+              attachment.url
             );
 
           return {
-            external_id:
-              externalId,
-            title,
-            tag_name:
-              tagName,
-            linked_entity:
-              linkedEntity,
-            version,
-            source,
-            start_date:
-              startDate,
-            expiration_date:
-              expirationDate,
-            created_at:
-              createdAt,
-            created_by_name:
-              createdByName,
+            ...baseRow,
             attachment_index:
               index + 1,
             file_name:
@@ -529,7 +644,8 @@ export const DOCUMENT_FILES_EXPORT_SCRIPT = `(async () => {
         'attachment_index',
         'file_name',
         'mime_type',
-        'storage_url'
+        'storage_url',
+        'needs_manual_upload'
       ];
 
       const escapeCsv = value =>
@@ -950,6 +1066,26 @@ export const DOCUMENT_FILES_EXPORT_SCRIPT = `(async () => {
     console.table(
       exportedRows
     );
+
+    const manualUploads =
+      exportedRows.filter(
+        row => row.needs_manual_upload
+      );
+
+    if (manualUploads.length) {
+      console.warn(
+        \`⚠ \${manualUploads.length} file(s) have no downloadable URL and must be uploaded manually:\`
+      );
+
+      console.table(
+        manualUploads.map(row => ({
+          external_id: row.external_id,
+          title: row.title,
+          version: row.version ?? row.source,
+          file_type: row.needs_manual_upload
+        }))
+      );
+    }
 
     downloadCsv(
       exportedRows

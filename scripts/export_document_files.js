@@ -313,6 +313,12 @@
     const MANUAL_UPLOAD_MARKER =
       'MANUAL_UPLOAD';
 
+    // storage_url written for a file the script cannot download (an Excel
+    // shown only as an icon, or any thumbnail it does not recognize). The
+    // import reports these as "not uploaded" so they get fixed by hand.
+    const UNKNOWN_FILE_URL =
+      'unone_file.unone';
+
     const MIME_BY_ICON = {
       excel:
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -490,7 +496,8 @@
                 getMimeTypeForIcon(
                   fileType
                 ),
-              storage_url: '',
+              storage_url:
+                UNKNOWN_FILE_URL,
               needs_manual_upload:
                 fileType
             };

@@ -874,6 +874,14 @@ function isCsvAttachment(options: {
 /** file_name the export script writes for a file it could not download. */
 const MANUAL_UPLOAD_FILE_NAME = /^\[MANUAL_UPLOAD\]\s*(.+)$/i;
 
+/** storage_url the export script writes for a file it could not download. */
+export const UNKNOWN_FILE_STORAGE_URL = "unone_file.unone";
+
+function isUnknownFileStorageUrl(storageUrl: string): boolean {
+  const value = storageUrl.trim().toLowerCase();
+  return value === UNKNOWN_FILE_STORAGE_URL || value.endsWith(".unone");
+}
+
 export const FILE_ATTACHMENT_NOT_CLOUDINARY_PREFIX = "__notCloudinary__:";
 
 export function fileAttachmentNotCloudinaryMessage(
@@ -1132,11 +1140,15 @@ export function parseFileAttachmentsImportContent(
       fileName: attachmentFileName,
       storageUrl,
     };
-    const manualFileType =
+    const markedFileType =
       (manualUploadIndex >= 0 ? (cells[manualUploadIndex] ?? "").trim() : "") ||
-      (!storageUrl
-        ? (attachmentFileName.match(MANUAL_UPLOAD_FILE_NAME)?.[1] ?? "").trim()
-        : "");
+      (attachmentFileName.match(MANUAL_UPLOAD_FILE_NAME)?.[1] ?? "").trim();
+    const manualFileType =
+      isUnknownFileStorageUrl(storageUrl)
+        ? markedFileType || "?"
+        : !storageUrl
+          ? markedFileType
+          : "";
     if (manualFileType) {
       // The export saw a file here (e.g. an Excel icon) but had no URL to
       // download it from: import the document and flag the file for a
