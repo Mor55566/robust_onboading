@@ -1252,15 +1252,11 @@ export function resolveFileAttachmentImportRows(options: {
       const uniqueMatches = [
         ...new Map(matches.map((user) => [user.id, user])).values(),
       ];
-      if (uniqueMatches.length !== 1) {
-        return {
-          ok: false,
-          rowNumber: row.rowNumber,
-          code: "user",
-          value: row.createdByName,
-        };
+      // If the uploader can't be matched to exactly one user, still import the
+      // file — just leave it without an uploader.
+      if (uniqueMatches.length === 1) {
+        createdByUserId = uniqueMatches[0]!.id;
       }
-      createdByUserId = uniqueMatches[0]!.id;
     }
 
     const incomingAttachments = row.attachments.map((attachment) => ({
