@@ -626,8 +626,16 @@ export type FileAttachmentImportDocument = {
   rowNumber: number;
   /** Every file row (header = 1) this document was built from — one per attachment. */
   sourceRowNumbers?: number[];
-  /** Attachment rows left out because their storage_url isn't on Cloudinary. */
-  rejectedAttachments?: { rowNumber: number; url: string }[];
+  /**
+   * Attachment rows left out: storage_url isn't on Cloudinary, or (with
+   * manualFileType) the export found a file with no downloadable URL — e.g. an
+   * Excel shown only as an icon — that has to be uploaded by hand.
+   */
+  rejectedAttachments?: {
+    rowNumber: number;
+    url: string;
+    manualFileType?: string;
+  }[];
   externalId: string;
   tag: string;
   resident: string;
@@ -863,6 +871,9 @@ function isCsvAttachment(options: {
   );
 }
 
+/** file_name the export script writes for a file it could not download. */
+const MANUAL_UPLOAD_FILE_NAME = /^\[MANUAL_UPLOAD\]\s*(.+)$/i;
+
 export const FILE_ATTACHMENT_NOT_CLOUDINARY_PREFIX = "__notCloudinary__:";
 
 export function fileAttachmentNotCloudinaryMessage(
@@ -882,28 +893,64 @@ export function parseFileAttachmentNotCloudinaryMessage(
   return { row: rest.slice(0, sep), url: rest.slice(sep + 1) };
 }
 
-export function isCopyableImageAttachment(options: {
+const MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  gif: "image/gif",
+  webp: "image/webp",
+  heic: "image/heic",
+  heif: "image/heif",
+  bmp: "image/bmp",
+  tif: "image/tiff",
+  tiff: "image/tiff",
+  svg: "image/svg+xml",
+  pdf: "application/pdf",
+  csv: "text/csv",
+  txt: "text/plain",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  zip: "application/zip",
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+};
+
+/** Best-guess mime type for an exported attachment with an empty/generic one. */
+export function attachmentMimeType(options: {
+  mimeType: string;
+  fileName: string;
+  storageUrl: string;
+}): string {
+  const mime = options.mimeType.trim().toLowerCase();
+  if (mime && mime !== "application/octet-stream") return mime;
+  for (const name of [options.fileName, attachmentPathname(options.storageUrl)]) {
+    const extension = name.trim().toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+    if (extension && MIME_BY_EXTENSION[extension]) {
+      return MIME_BY_EXTENSION[extension]!;
+    }
+  }
+  if (/\/image\/upload\//i.test(attachmentPathname(options.storageUrl))) {
+    return "image/jpeg";
+  }
+  return mime || "application/octet-stream";
+}
+
+/**
+ * Whether an exported attachment can be copied: any file stored on
+ * Cloudinary (images, PDFs, CSV, Excel, Word, videos…), whatever its type.
+ */
+export function isCopyableAttachment(options: {
   mimeType: string;
   fileName: string;
   storageUrl: string;
 }): boolean {
-  const mime = options.mimeType.trim().toLowerCase();
-  const fileName = options.fileName.trim().toLowerCase();
   const rawUrl = options.storageUrl.trim();
   if (!/^https?:\/\//i.test(rawUrl)) return false;
-  if (!isCloudinaryStorageUrl(rawUrl)) return false;
-  if (isCsvAttachment(options)) return false;
-
-  const pathname = attachmentPathname(rawUrl);
-  if (mime.startsWith("image/")) return true;
-  // Cloudinary keeps PDFs under /image/upload/ too: copy those in their
-  // original format instead of skipping them.
-  if (/\/image\/upload\//i.test(pathname)) return true;
-  if (mime === "application/pdf") return true;
-  return (
-    /\.(jpe?g|png|gif|webp|heic|heif|bmp|tif|tiff|pdf)$/i.test(fileName) ||
-    /\.(jpe?g|png|gif|webp|heic|heif|bmp|tif|tiff|pdf)$/i.test(pathname)
-  );
+  return isCloudinaryStorageUrl(rawUrl);
 }
 
 export function cloudinaryPublicIdFromSource(
@@ -1013,6 +1060,10 @@ export function parseFileAttachmentsImportContent(
     "mime_type",
     "content type",
   ]);
+  const manualUploadIndex = findHeaderIndex(header, [
+    "needs_manual_upload",
+    "needs manual upload",
+  ]);
 
   if (externalIdIndex < 0 || storageUrlIndex < 0) {
     return { error: "invalid" };
@@ -1081,6 +1132,21 @@ export function parseFileAttachmentsImportContent(
       fileName: attachmentFileName,
       storageUrl,
     };
+    const manualFileType =
+      (manualUploadIndex >= 0 ? (cells[manualUploadIndex] ?? "").trim() : "") ||
+      (!storageUrl
+        ? (attachmentFileName.match(MANUAL_UPLOAD_FILE_NAME)?.[1] ?? "").trim()
+        : "");
+    if (manualFileType) {
+      // The export saw a file here (e.g. an Excel icon) but had no URL to
+      // download it from: import the document and flag the file for a
+      // manual upload.
+      document.rejectedAttachments = [
+        ...(document.rejectedAttachments ?? []),
+        { rowNumber, url: "", manualFileType },
+      ];
+      continue;
+    }
     if (storageUrl && !isCsvAttachment(attachment) && !isCloudinaryStorageUrl(storageUrl)) {
       // Leave just this attachment out; the import reports it at the end
       // instead of rejecting the whole file.
@@ -1090,14 +1156,14 @@ export function parseFileAttachmentsImportContent(
       ];
       continue;
     }
-    if (isCopyableImageAttachment(attachment)) {
+    if (isCopyableAttachment(attachment)) {
       document.attachments.push({
         index:
           attachmentIndexIndex >= 0
             ? parsePositiveInt(cells[attachmentIndexIndex] ?? "", 0)
             : document.attachments.length + 1,
         fileName: attachmentFileName || storageUrl,
-        mimeType: mimeType || "image/jpeg",
+        mimeType: attachmentMimeType(attachment),
         storageUrl,
         externalId: cloudinaryPublicIdFromSource(storageUrl, attachmentFileName),
       });

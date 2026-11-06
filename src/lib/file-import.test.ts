@@ -4,7 +4,7 @@ import {
   cloudinaryPublicIdFromSource,
   isArchivedImportedResident,
   isCloudinaryStorageUrl,
-  isCopyableImageAttachment,
+  isCopyableAttachment,
   isUnlinkedImportedResident,
   normalizeImportedResidentName,
   parseFileAttachmentsImportContent,
@@ -409,9 +409,9 @@ describe("document attachment import", () => {
       "kvmhd9spoznhhnjc76gh",
     );
   });
-  it("copies image URLs and skips CSV attachment URLs", () => {
+  it("copies any Cloudinary attachment, including CSV, and skips other hosts", () => {
     assert.equal(
-      isCopyableImageAttachment({
+      isCopyableAttachment({
         mimeType: "image/jpeg",
         fileName: "photo.jpeg",
         storageUrl: "https://res.cloudinary.com/gantzi/image/upload/photo.jpeg",
@@ -419,15 +419,15 @@ describe("document attachment import", () => {
       true,
     );
     assert.equal(
-      isCopyableImageAttachment({
+      isCopyableAttachment({
         mimeType: "text/csv",
         fileName: "notes.csv",
         storageUrl: "https://res.cloudinary.com/gantzi/raw/upload/notes.csv",
       }),
-      false,
+      true,
     );
     assert.equal(
-      isCopyableImageAttachment({
+      isCopyableAttachment({
         mimeType: "image/jpeg",
         fileName: "export.csv",
         storageUrl: "https://example.com/documents_export.csv",
@@ -435,7 +435,7 @@ describe("document attachment import", () => {
       false,
     );
     assert.equal(
-      isCopyableImageAttachment({
+      isCopyableAttachment({
         mimeType: "image/jpeg",
         fileName: "photo.jpeg",
         storageUrl: "https://example.com/photo.jpeg",
@@ -495,7 +495,7 @@ describe("document attachment import", () => {
     assert.equal(parsed.rows[0]?.externalId, "655dbe604d69d1fff0721cdd");
   });
 
-  it("groups export rows by external id and keeps only image attachments", () => {
+  it("groups export rows by external id and keeps every attachment type", () => {
     const parsed = parseFileAttachmentsImportContent(
       DOCUMENTS_EXPORT_CSV,
       "documents_export.csv",
@@ -511,7 +511,7 @@ describe("document attachment import", () => {
     assert.equal(document.expirationDate, "2027-04-30");
     assert.equal(document.createdAt, "2023-11-22T10:40:00+03:00");
     assert.equal(document.createdByName, "ישראל ישראלי");
-    assert.equal(document.attachments.length, 4);
+    assert.equal(document.attachments.length, 5);
     assert.deepEqual(
       document.attachments.map((attachment) => attachment.externalId),
       [
@@ -519,6 +519,7 @@ describe("document attachment import", () => {
         "covjbcdm9sibbu323bbj",
         "mnse5agr5xbbse91diry",
         "tea8kchd0hz3bbffdhfc",
+        "notes",
       ],
     );
     assert.deepEqual(
@@ -528,11 +529,35 @@ describe("document attachment import", () => {
         "covjbcdm9sibbu323bbj.jpeg",
         "mnse5agr5xbbse91diry.jpeg",
         "tea8kchd0hz3bbffdhfc.jpeg",
+        "notes.csv",
       ],
     );
+    assert.equal(document.attachments[4]?.mimeType, "text/csv");
   });
 
-  it("attaches images to an existing series matched by external_id", () => {
+  it("flags files the export could not download for a manual upload", () => {
+    const parsed = parseFileAttachmentsImportContent(
+      `external_id,version,attachment_index,file_name,mime_type,storage_url,needs_manual_upload
+"doc-1","1","1","[MANUAL_UPLOAD] Excel","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","","Excel"
+"doc-1","1","2","photo.jpeg","image/jpeg","https://res.cloudinary.com/gantzi/image/upload/photo.jpeg",""
+"doc-2","1","1","[MANUAL_UPLOAD] Word","","",""
+`,
+      "documents_export.csv",
+    );
+    assert.equal("rows" in parsed, true);
+    if (!("rows" in parsed)) return;
+    assert.equal(parsed.rows.length, 2);
+    assert.equal(parsed.rows[0]?.attachments.length, 1);
+    assert.deepEqual(parsed.rows[0]?.rejectedAttachments, [
+      { rowNumber: 2, url: "", manualFileType: "Excel" },
+    ]);
+    assert.equal(parsed.rows[1]?.attachments.length, 0);
+    assert.deepEqual(parsed.rows[1]?.rejectedAttachments, [
+      { rowNumber: 4, url: "", manualFileType: "Word" },
+    ]);
+  });
+
+  it("attaches files to an existing series matched by external_id", () => {
     const parsed = parseFileAttachmentsImportContent(
       DOCUMENTS_EXPORT_CSV,
       "documents_export.csv",
@@ -592,7 +617,7 @@ describe("document attachment import", () => {
     assert.equal(item.residentId, "resident-1");
     assert.equal(item.createdByUserId, "user-1");
     assert.equal(item.fileExternalId, "tuejkh7aabxfbt0ngkiq");
-    assert.equal(item.attachments.length, 4);
+    assert.equal(item.attachments.length, 5);
   });
 
   it("creates a second version on the same series", () => {

@@ -352,6 +352,8 @@ export const ru: Dictionary = {
       "Не удалось прочитать файл. Используйте экспорт документов с колонками external_id и storage_url.",
     fileAttachmentsUploadInvalidRow:
       "В некоторых строках отсутствует внешний id.",
+    fileAttachmentsManualUpload:
+      "В этой строке есть файл {fileType}, который нельзя скачать автоматически. Документ импортируется без него — загрузите файл вручную в документ {externalId} (версия {version}).",
     fileAttachmentsNotCloudinary:
       "Нельзя загрузить этот файл: storage_url не является URL Cloudinary ({url}). Можно загружать только файлы, хранящиеся в Cloudinary.",
     fileAttachmentsUploadSuccess:

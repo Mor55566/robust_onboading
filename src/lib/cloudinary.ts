@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { v2 as cloudinary, type UploadApiResponse } from "cloudinary";
+import { compressPdfToFit } from "@/lib/pdf-compress";
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_FILES,
@@ -276,6 +277,15 @@ function mimeFromContentType(contentType: string | null, fileName: string): stri
   if (lower.endsWith(".webp")) return "image/webp";
   if (lower.endsWith(".jpeg") || lower.endsWith(".jpg")) return "image/jpeg";
   if (lower.endsWith(".pdf")) return "application/pdf";
+  const extension = lower.match(/\.([a-z0-9]+)$/)?.[1];
+  const byExtension = Object.entries(EXTENSION_BY_MIME).find(
+    ([, ext]) => ext === `.${extension}`,
+  )?.[0];
+  if (byExtension) return byExtension;
+  if (extension === "csv") return "text/csv";
+  if (extension && extension !== "jpg" && extension !== "jpeg") {
+    return "application/octet-stream";
+  }
   return "image/jpeg";
 }
 
@@ -298,6 +308,7 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
   "application/zip": ".zip",
   "text/plain": ".txt",
+  "text/csv": ".csv",
   "video/mp4": ".mp4",
   "video/quicktime": ".mov",
 };
@@ -318,19 +329,21 @@ export function fileNameForMime(fileName: string, mimeType: string): string {
 }
 
 /**
- * The URL of a Cloudinary image asset in its ORIGINAL format.
+ * The URL of a Cloudinary image/video asset in its ORIGINAL format.
  *
  * Exports read attachment URLs from preview thumbnails, and Cloudinary serves
  * those as ".jpg" even when the asset is a PDF (or PNG, HEIC…): the extension
  * of a Cloudinary image URL picks the delivered format. Dropping the extension
  * (and any transformation) makes Cloudinary deliver the asset as uploaded.
- * Returns null when the URL is not a Cloudinary image delivery URL.
+ * Returns null when the URL is not a Cloudinary image/video delivery URL.
  */
 export function originalFormatCloudinaryUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
     if (!/(^|\.)cloudinary\.com$/i.test(parsed.hostname)) return null;
-    const match = parsed.pathname.match(/^(.*\/image\/upload\/)(.+)$/i);
+    // Video thumbnails (".../video/upload/c_fill,h_60,w_60/x.jpeg") are
+    // also previews: without the extension Cloudinary serves the video.
+    const match = parsed.pathname.match(/^(.*\/(?:image|video)\/upload\/)(.+)$/i);
     if (!match) return null;
     const segments = match[2]!.split("/").filter(Boolean);
     // Drop transformation segments (e.g. "c_fill,h_60,w_60") before the
@@ -391,8 +404,18 @@ export function describeStoredUrl(url: string): UploadedFile {
 
 // Without these, one source URL or upload that never answers keeps the
 // whole import request open forever and the UI never sees an error.
-const REMOTE_DOWNLOAD_TIMEOUT_MS = 30_000;
-const REMOTE_UPLOAD_TIMEOUT_MS = 90_000;
+const REMOTE_DOWNLOAD_TIMEOUT_MS = 120_000;
+const REMOTE_UPLOAD_TIMEOUT_MS = 300_000;
+
+/**
+ * Largest image/PDF/raw file the Cloudinary account accepts (Free plan:
+ * 10MB). Set CLOUDINARY_MAX_FILE_BYTES after upgrading the plan. Kept a
+ * little under the limit so a compressed PDF never lands right on it.
+ */
+const CLOUDINARY_MAX_FILE_BYTES =
+  Number(process.env.CLOUDINARY_MAX_FILE_BYTES) > 0
+    ? Number(process.env.CLOUDINARY_MAX_FILE_BYTES)
+    : 10 * 1024 * 1024 - 64 * 1024;
 
 /** Stable public_id for an imported file, derived from its source URL. */
 function importPublicId(
@@ -480,8 +503,9 @@ async function uploadAttachmentFromUrl(
       retryable: false,
     });
   }
-  // Imports may include larger Visitt photos than the form upload limit.
-  const maxRemoteBytes = Math.max(MAX_ATTACHMENT_BYTES, 12 * 1024 * 1024);
+  // Imports copy original files (scanned PDFs, videos), which are often far
+  // larger than the form upload limit. 100MB is Cloudinary's upload API cap.
+  const maxRemoteBytes = Math.max(MAX_ATTACHMENT_BYTES, 100 * 1024 * 1024);
   if (buffer!.byteLength > maxRemoteBytes) {
     throw new CloudinaryUploadError(
       `Image exceeds ${maxRemoteBytes} bytes: ${url}`,
@@ -491,6 +515,20 @@ async function uploadAttachmentFromUrl(
 
   const resourceType =
     resourceTypeFromSourceUrl(url) ?? resourceTypeForMime(mimeType);
+
+  // The account rejects images/PDFs/raw files over its plan limit (10MB on
+  // the Free plan). Scanned PDFs often are bigger: shrink their images so
+  // they fit instead of failing the whole document.
+  if (mimeType === "application/pdf" && buffer!.byteLength > CLOUDINARY_MAX_FILE_BYTES) {
+    const compressed = await compressPdfToFit(buffer!, CLOUDINARY_MAX_FILE_BYTES);
+    if (!compressed) {
+      throw new CloudinaryUploadError(
+        `PDF is ${(buffer!.byteLength / 1024 / 1024).toFixed(1)}MB and could not be compressed under ${(CLOUDINARY_MAX_FILE_BYTES / 1024 / 1024).toFixed(0)}MB: ${url}`,
+        { retryable: false },
+      );
+    }
+    buffer = compressed;
+  }
 
   try {
     const uploaded = await new Promise<UploadApiResponse>((resolve, reject) => {

@@ -348,6 +348,8 @@ export const he: Dictionary = {
       "לא ניתן לקרוא את הקובץ. השתמשו בייצוא מסמכים עם external_id ו-storage_url.",
     fileAttachmentsUploadInvalidRow:
       "בחלק מהשורות חסר מזהה חיצוני.",
+    fileAttachmentsManualUpload:
+      "יש כאן קובץ {fileType} שלא ניתן להוריד אוטומטית. המסמך יובא בלעדיו – יש להעלות את הקובץ ידנית למסמך {externalId} (גרסה {version}).",
     fileAttachmentsNotCloudinary:
       "לא ניתן להעלות את הקובץ כי כתובת storage_url אינה של Cloudinary ({url}). אפשר להעלות רק קבצים שנמצאים ב-Cloudinary.",
     fileAttachmentsUploadSuccess:

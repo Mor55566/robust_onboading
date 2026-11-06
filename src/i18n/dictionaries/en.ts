@@ -349,6 +349,8 @@ export const en = {
       "Could not read this file. Use a documents export with external_id and storage_url.",
     fileAttachmentsUploadInvalidRow:
       "Some rows are missing external id.",
+    fileAttachmentsManualUpload:
+      "This row has a {fileType} file that cannot be downloaded automatically. The document is imported without it — upload the file manually to document {externalId} (version {version}).",
     fileAttachmentsNotCloudinary:
       "Cannot upload this file because storage_url is not a Cloudinary URL ({url}). Only files stored in Cloudinary can be uploaded.",
     fileAttachmentsUploadSuccess:

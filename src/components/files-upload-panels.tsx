@@ -99,7 +99,11 @@ async function importInBatches<Row extends { rowNumber: number }>(
   return { created, updated, failures };
 }
 
-/** One failure per attachment row the parser left out for a non-Cloudinary URL. */
+/**
+ * One failure per attachment row the parser left out: a non-Cloudinary URL,
+ * or a file (e.g. Excel) the export could not download and that must be
+ * uploaded manually.
+ */
 function rejectedAttachmentFailures(
   rows: FileAttachmentImportDocument[],
   dict: Dictionary,
@@ -108,9 +112,15 @@ function rejectedAttachmentFailures(
     (row.rejectedAttachments ?? []).map((rejected) => ({
       rowNumber: rejected.rowNumber,
       label: `${row.externalId} · v${row.version}`,
-      error: t(dict.superAdmin.fileAttachmentsNotCloudinary, {
-        url: rejected.url,
-      }),
+      error: rejected.manualFileType
+        ? t(dict.superAdmin.fileAttachmentsManualUpload, {
+            fileType: rejected.manualFileType,
+            externalId: row.externalId,
+            version: String(row.version),
+          })
+        : t(dict.superAdmin.fileAttachmentsNotCloudinary, {
+            url: rejected.url,
+          }),
     })),
   );
 }
