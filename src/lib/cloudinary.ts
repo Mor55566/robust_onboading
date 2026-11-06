@@ -279,6 +279,84 @@ function mimeFromContentType(contentType: string | null, fileName: string): stri
   return "image/jpeg";
 }
 
+const EXTENSION_BY_MIME: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "image/heic": ".heic",
+  "image/heif": ".heif",
+  "image/bmp": ".bmp",
+  "image/tiff": ".tiff",
+  "image/svg+xml": ".svg",
+  "application/pdf": ".pdf",
+  "application/msword": ".doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.ms-excel": ".xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "application/vnd.ms-powerpoint": ".ppt",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+  "application/zip": ".zip",
+  "text/plain": ".txt",
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov",
+};
+
+/**
+ * Give a file name the extension of its real format, so a PDF that the
+ * source page only showed as a ".jpg" preview is saved as "name.pdf".
+ */
+export function fileNameForMime(fileName: string, mimeType: string): string {
+  const extension = EXTENSION_BY_MIME[mimeType.trim().toLowerCase()];
+  if (!extension) return fileName;
+  const current = fileName.match(/\.[a-z0-9]+$/i)?.[0]?.toLowerCase() ?? "";
+  if (current === extension) return fileName;
+  if (extension === ".jpg" && current === ".jpeg") return fileName;
+  if (extension === ".tiff" && current === ".tif") return fileName;
+  const base = current ? fileName.slice(0, -current.length) : fileName;
+  return `${base || "file"}${extension}`;
+}
+
+/**
+ * The URL of a Cloudinary image asset in its ORIGINAL format.
+ *
+ * Exports read attachment URLs from preview thumbnails, and Cloudinary serves
+ * those as ".jpg" even when the asset is a PDF (or PNG, HEIC…): the extension
+ * of a Cloudinary image URL picks the delivered format. Dropping the extension
+ * (and any transformation) makes Cloudinary deliver the asset as uploaded.
+ * Returns null when the URL is not a Cloudinary image delivery URL.
+ */
+export function originalFormatCloudinaryUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)cloudinary\.com$/i.test(parsed.hostname)) return null;
+    const match = parsed.pathname.match(/^(.*\/image\/upload\/)(.+)$/i);
+    if (!match) return null;
+    const segments = match[2]!.split("/").filter(Boolean);
+    // Drop transformation segments (e.g. "c_fill,h_60,w_60") before the
+    // version / public id; keep "v123" version segments and folders.
+    const isTransformation = (segment: string) =>
+      segment
+        .split(",")
+        .every((part) =>
+          /^(a|ac|af|ar|b|bo|br|c|co|cs|d|dl|dn|dpr|du|e|eo|f|fl|fn|fps|g|h|ki|l|o|p|pg|q|r|so|sp|t|u|vc|vs|w|x|y|z)_[^,]+$/i.test(part),
+        );
+    while (segments.length > 1 && isTransformation(segments[0]!)) {
+      segments.shift();
+    }
+    const last = segments[segments.length - 1]!;
+    const withoutExtension = last.replace(/\.[a-z0-9]+$/i, "");
+    if (!withoutExtension) return null;
+    segments[segments.length - 1] = withoutExtension;
+    parsed.pathname = `${match[1]}${segments.join("/")}`;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 function ownCloudName(): string {
   const { cloudName } = getCredentials();
   return cloudName?.toLowerCase() ?? "";
@@ -335,7 +413,32 @@ async function uploadAttachmentFromUrl(
 ): Promise<UploadedFile> {
   let response: Response;
   let buffer: Buffer;
+  // Prefer the asset in its original format (PDF stays PDF, PNG stays PNG).
+  // Some accounts block delivering PDFs that way, so fall back to the URL
+  // as given rather than losing the file.
+  const originalUrl = originalFormatCloudinaryUrl(url);
+  let downloadedUrl = url;
+  if (originalUrl && originalUrl !== url) {
+    try {
+      const original = await fetch(originalUrl, {
+        redirect: "follow",
+        headers: { Accept: "*/*" },
+        signal: AbortSignal.timeout(REMOTE_DOWNLOAD_TIMEOUT_MS),
+      });
+      if (original.ok) {
+        const originalBuffer = Buffer.from(await original.arrayBuffer());
+        if (originalBuffer.byteLength > 0) {
+          response = original;
+          buffer = originalBuffer;
+          downloadedUrl = originalUrl;
+        }
+      }
+    } catch {
+      // Fall through to the URL as given.
+    }
+  }
   try {
+    if (downloadedUrl === url) {
     response = await fetch(url, {
       redirect: "follow",
       headers: { Accept: "image/*,*/*" },
@@ -354,6 +457,7 @@ async function uploadAttachmentFromUrl(
       );
     }
     buffer = Buffer.from(await response.arrayBuffer());
+    }
   } catch (error) {
     if (error instanceof CloudinaryUploadError) throw error;
     const timedOut =
@@ -365,19 +469,20 @@ async function uploadAttachmentFromUrl(
     );
   }
 
-  const fileName = fileNameFromUrl(url);
+  const sourceFileName = fileNameFromUrl(url);
   const mimeType = mimeFromContentType(
-    response.headers.get("content-type"),
-    fileName,
+    response!.headers.get("content-type"),
+    sourceFileName,
   );
-  if (buffer.byteLength === 0) {
+  const fileName = fileNameForMime(sourceFileName, mimeType);
+  if (buffer!.byteLength === 0) {
     throw new CloudinaryUploadError(`Empty image download: ${url}`, {
       retryable: false,
     });
   }
   // Imports may include larger Visitt photos than the form upload limit.
   const maxRemoteBytes = Math.max(MAX_ATTACHMENT_BYTES, 12 * 1024 * 1024);
-  if (buffer.byteLength > maxRemoteBytes) {
+  if (buffer!.byteLength > maxRemoteBytes) {
     throw new CloudinaryUploadError(
       `Image exceeds ${maxRemoteBytes} bytes: ${url}`,
       { retryable: false },
@@ -404,7 +509,9 @@ async function uploadAttachmentFromUrl(
                 // Same source URL -> same asset. If an earlier import already
                 // uploaded it (even one that failed before saving its DB rows),
                 // Cloudinary returns the existing asset instead of storing a copy.
-                public_id: importPublicId(url, fileName, resourceType),
+                // Keyed on the URL actually downloaded, so an asset copied
+                // earlier as a ".jpg" preview is not reused for the original.
+                public_id: importPublicId(downloadedUrl, fileName, resourceType),
                 overwrite: false,
               }
             : {
@@ -422,7 +529,7 @@ async function uploadAttachmentFromUrl(
           resolve(result);
         },
       );
-      Readable.from(buffer).pipe(stream);
+      Readable.from(buffer!).pipe(stream);
     });
 
     if (!uploaded.secure_url) {

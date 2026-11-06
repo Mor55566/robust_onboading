@@ -16,6 +16,7 @@ import {
   describeStoredUrl,
   isOwnCloudinaryUrl,
   uploadTaskAttachmentsFromUrls,
+  fileNameForMime,
   uploadTaskAttachmentsFromUrlsSettled,
   type SettledUpload,
   type UploadedFile,
@@ -4495,8 +4496,13 @@ export async function importFileAttachmentsAction(
           if (!file || isForeignCloudinaryUrl(file.storage_url)) return [];
           return [
             {
-              file_name: source.fileName || file.file_name,
-              mime_type: source.mimeType || file.mime_type,
+              // The downloaded file's real type wins over the export's guess
+              // (exports only see ".jpg" previews, even for PDFs).
+              file_name: fileNameForMime(
+                source.fileName || file.file_name,
+                file.mime_type || source.mimeType,
+              ),
+              mime_type: file.mime_type || source.mimeType,
               storage_url: file.storage_url,
               external_id:
                 source.externalId ??

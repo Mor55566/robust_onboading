@@ -896,9 +896,13 @@ export function isCopyableImageAttachment(options: {
 
   const pathname = attachmentPathname(rawUrl);
   if (mime.startsWith("image/")) return true;
+  // Cloudinary keeps PDFs under /image/upload/ too: copy those in their
+  // original format instead of skipping them.
+  if (/\/image\/upload\//i.test(pathname)) return true;
+  if (mime === "application/pdf") return true;
   return (
-    /\.(jpe?g|png|gif|webp|heic|heif|bmp|tif|tiff)$/i.test(fileName) ||
-    /\.(jpe?g|png|gif|webp|heic|heif|bmp|tif|tiff)$/i.test(pathname)
+    /\.(jpe?g|png|gif|webp|heic|heif|bmp|tif|tiff|pdf)$/i.test(fileName) ||
+    /\.(jpe?g|png|gif|webp|heic|heif|bmp|tif|tiff|pdf)$/i.test(pathname)
   );
 }
 
