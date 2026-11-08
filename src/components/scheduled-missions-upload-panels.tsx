@@ -27,6 +27,7 @@ import {
 import {
   buildMissionsCsvTemplate,
   buildMissionsExcelTemplate,
+  MISSING_LOCATION_ORDER_PREFIX,
   parseMissionsImportContent,
   type MissionImportRow,
 } from "@/lib/mission-import";
@@ -51,7 +52,7 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
   } = useComplexContext();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
-  const [pauseAll, setPauseAll] = useState(true);
+  const [pauseAll, setPauseAll] = useState(false);
   const [message, setMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -306,6 +307,17 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
         buildExcel={buildMissionsExcelTemplate}
         parse={(content, fileName) => {
           const parsed = parseMissionsImportContent(content, fileName);
+          if (
+            "error" in parsed &&
+            parsed.message?.startsWith(MISSING_LOCATION_ORDER_PREFIX)
+          ) {
+            return {
+              error: parsed.error,
+              message: t(dict.superAdmin.scheduledMissionsUploadMissingLocationOrder, {
+                missions: parsed.message.slice(MISSING_LOCATION_ORDER_PREFIX.length),
+              }),
+            };
+          }
           if (
             "error" in parsed &&
             parsed.message === "__missing_required__"

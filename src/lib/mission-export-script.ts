@@ -35,7 +35,8 @@ export const MISSION_EXPORT_SCRIPT = `/*
     SCAN_STEP_DELAY_MS: 250,
     SCAN_LOAD_WAIT_MS: 4000,
     SCAN_MAX_IDLE_ROUNDS: 3,
-    ACTIONS_TOGGLE_SELECTOR: '[data-test-id="assignment-actions-dropdown"] .dropdown-button',
+    // Visitt dropped the .dropdown-button class; the ⋯ is the wrapper's own button.
+    ACTIONS_TOGGLE_SELECTOR: '[data-test-id="assignment-actions-dropdown"] > button',
     EDIT_LINK_SELECTOR: 'a[data-test-id="edit-assignment-dropdown-button"]',
     EDIT_FORM_SELECTOR: 'form.assignment-form',
     ORDER_STEP_TITLE: 'סדר',
@@ -240,6 +241,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
   // false only when the page could not get back out of the wizard.
   async function readSiteOrder(modal, assignmentHref) {
     const toggle = modal.querySelector(CONFIG.ACTIONS_TOGGLE_SELECTOR);
+    console.log('[סדר v5] פותח ⋯:', toggle ? 'נמצא' : 'לא נמצא');
     if (!(toggle instanceof HTMLElement)) {
       console.warn('תפריט ⋯ של המשימה לא נמצא; המשימה תיוצא לפי סדר הכרטיסים.');
       return { siteOrder: [], returned: true };
@@ -251,23 +253,51 @@ export const MISSION_EXPORT_SCRIPT = `/*
       CONFIG.BEFORE_OPTION_CLICK_MIN_MS,
       CONFIG.BEFORE_OPTION_CLICK_MAX_MS
     );
-    activateCloseButton(toggle);
+    // The modal's own URL is the most reliable id; the table link may differ.
+    const pageMatch = location.pathname.match(/^\\/assignment\\/([^/]+)/);
+    const expectedIds = new Set([assignmentId, pageMatch && pageMatch[1]].filter(Boolean));
+    const editCandidates = () =>
+      [...document.querySelectorAll(CONFIG.EDIT_LINK_SELECTOR)].filter(
+        (link) => link instanceof HTMLAnchorElement
+      );
+    const findEditLink = () =>
+      editCandidates().find((link) => {
+        const match = (link.getAttribute('href') || '').match(/^\\/assignment\\/([^/?#]+)\\/edit\\/?$/);
+        return match && expectedIds.has(match[1]) && clean(link.textContent).includes('ערוך');
+      }) || null;
 
-    let editLink;
-    try {
-      editLink = await waitFor(() => {
-        const link = document.querySelector(CONFIG.EDIT_LINK_SELECTOR);
-        return link instanceof HTMLAnchorElement &&
-          link.getAttribute('href') === \`/assignment/\${assignmentId}/edit\` &&
-          clean(link.textContent) === 'ערוך'
-          ? link
-          : null;
-      }, 3000, 'the exact "ערוך" link');
-    } catch (error) {
-      activateCloseButton(toggle);
-      console.warn('הקישור "ערוך" לא נמצא; המשימה תיוצא לפי סדר הכרטיסים.', error);
+    // Re-query the ⋯ button each attempt (the modal may have re-rendered) and
+    // click again only while no edit link exists, so an open menu is never
+    // clicked shut. The pointer sequence is the last resort.
+    const freshToggle = () =>
+      document.querySelector(CONFIG.MODAL_SELECTOR + ' ' + CONFIG.ACTIONS_TOGGLE_SELECTOR) ||
+      (toggle.isConnected ? toggle : null);
+    const attempts = [
+      (button) => button.click(),
+      (button) => button.click(),
+      (button) => activateCloseButton(button),
+    ];
+    let editLink = null;
+    for (const [attempt, open] of attempts.entries()) {
+      if (editCandidates().length) break;
+      const button = freshToggle();
+      console.log('[סדר v5] ניסיון', attempt + 1, 'לפתוח ⋯ | מחובר:', !!button && button.isConnected, '| אותו כפתור:', button === toggle);
+      if (!button) break;
+      button.scrollIntoView({ block: 'center' });
+      await sleep(300);
+      open(button);
+      editLink = await waitFor(findEditLink, 2000, 'the exact "ערוך" link').catch(() => null);
+      if (editLink) break;
+    }
+    if (!editLink) {
+      console.warn(
+        '[סדר v5] הקישור "ערוך" לא זוהה. מזהים צפויים:', [...expectedIds],
+        'קישורים שנמצאו:', editCandidates().map((link) => [link.getAttribute('href'), clean(link.textContent)])
+      );
+      if (editCandidates().length) freshToggle()?.click();
       return { siteOrder: [], returned: true };
     }
+    console.log('[סדר v5] נכנס ל"ערוך"');
 
     await randomDelay(
       CONFIG.BEFORE_OPTION_CLICK_MIN_MS,
@@ -280,7 +310,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
       const stepButton = await waitFor(() => {
         const step = [
           ...document.querySelectorAll(
-            \`\${CONFIG.EDIT_FORM_SELECTOR} .stepper-wrapper .step-wrapper\`
+            '.stepper-wrapper .step-wrapper'
           ),
         ].find(
           (element) =>
@@ -295,11 +325,12 @@ export const MISSION_EXPORT_SCRIPT = `/*
         CONFIG.BEFORE_OPTION_CLICK_MAX_MS
       );
       stepButton.click();
+      console.log('[סדר v5] נלחץ השלב "סדר"');
 
       const rows = await waitFor(() => {
         const found = [
           ...document.querySelectorAll(
-            \`\${CONFIG.EDIT_FORM_SELECTOR} \${CONFIG.ORDER_ROW_SELECTOR}\`
+            CONFIG.ORDER_ROW_SELECTOR
           ),
         ];
         return found.length ? found : null;
@@ -317,6 +348,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
           path: [...parents.slice(1), name].join(' < '),
         };
       });
+      console.log('[סדר v5] נקראו', siteOrder.length, 'מיקומים');
     } catch (error) {
       console.warn('מסך הסדר לא נקרא; המשימה תיוצא לפי סדר הכרטיסים.', error);
     }

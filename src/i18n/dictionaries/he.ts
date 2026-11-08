@@ -218,6 +218,8 @@ export const he: Dictionary = {
       "לא ניתן לקרוא את הקובץ. השתמשו בתבנית CSV או Excel.",
     scheduledMissionsUploadMissingRequired:
       "לא נמצאו עמודות חובה (מזהה ושם). השתמשו בתבנית או בייצוא Visitt.",
+    scheduledMissionsUploadMissingLocationOrder:
+      "בקובץ חסר סדר המיקומים (location_order) במשימות עם כמה מיקומים: {missions}. סקריפט הייצוא לא הצליח לקרוא את שלב \"סדר\" ב-Visitt, כנראה בגלל שינוי ב-Visitt. אל תעלו את הקובץ — עדכנו את הסקריפט והריצו את הייצוא מחדש.",
     scheduledMissionsUploadInvalidRow: "בחלק מהשורות חסרים מזהה או שם.",
     scheduledMissionsUploadSuccess: "יובאו {count} משימות מתוזמנות",
     scheduledMissionsUploadSuccessDetailed:

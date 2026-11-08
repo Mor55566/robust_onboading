@@ -218,6 +218,8 @@ export const ru: Dictionary = {
       "Не удалось прочитать файл. Используйте шаблон CSV или Excel.",
     scheduledMissionsUploadMissingRequired:
       "Не найдены обязательные столбцы (מזהה и שם). Используйте шаблон или экспорт Visitt.",
+    scheduledMissionsUploadMissingLocationOrder:
+      "В файле нет порядка локаций (location_order) для задач с несколькими локациями: {missions}. Скрипт экспорта не смог прочитать шаг «סדר» в Visitt, вероятно, из-за изменений в Visitt. Не загружайте этот файл — обновите скрипт и запустите экспорт заново.",
     scheduledMissionsUploadInvalidRow:
       "В некоторых строках отсутствуют מזהה или שם.",
     scheduledMissionsUploadSuccess: "Импортировано запланированных задач: {count}",

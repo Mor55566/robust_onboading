@@ -4,6 +4,7 @@ import {
   buildMissionsCsvTemplate,
   collapseLocationChecklistItems,
   groupMissionChecklistItems,
+  MISSING_LOCATION_ORDER_PREFIX,
   missionChecklistSlots,
   parseMissionFrequency,
   parseMissionImportDate,
@@ -128,40 +129,36 @@ describe("scheduled missions CSV import", () => {
     assert.equal(parsed.rows[0]?.createdAt, "2023-04-11T09:08:00+03:00");
   });
 
-  it("collapses location-named checklist rows into one checklist inside one mission", () => {
+  it("rejects a multi-location export without location_order (the exporter missed the סדר step)", () => {
     const csv = [
       "source_index,assignment_name,assignees,location,checklist_title,checklist_order,checklist_name,field_type",
-      '1,"בדיקת כיבוי אש","סמיון קיפניס, סרגיי גורינוב","בניין A / קומה 36 / עמדה 1A","בניין A / קומה 36 / עמדה 1A",1,"בדוק את העמדה",multi_select',
-      '1,"בדיקת כיבוי אש","סמיון קיפניס, סרגיי גורינוב","בניין A / קומה 36 / עמדה 2A","בניין A / קומה 36 / עמדה 2A",1,"בדוק את העמדה",multi_select',
+      '1,"בדיקת כיבוי אש","סמיון קיפניס","בניין A / קומה 36 / עמדה 1A","בניין A / קומה 36 / עמדה 1A",1,"בדוק את העמדה",multi_select',
+      '1,"בדיקת כיבוי אש","סמיון קיפניס","בניין A / קומה 36 / עמדה 2A","בניין A / קומה 36 / עמדה 2A",1,"בדוק את העמדה",multi_select',
+      '2,"בדיקה אחת","סמיון קיפניס","בניין A / קומה 1","בניין A / קומה 1",1,"בדוק",checkbox',
+      '3,"סיור","סמיון קיפניס","בניין A / קומה 1;בניין A / קומה 2","בדיקות",1,"בדוק",checkbox',
     ].join("\n");
 
-    const parsed = parseMissionsImportContent(csv, "locations.csv");
-    assert.ok(!("error" in parsed), JSON.stringify(parsed));
-    assert.equal(parsed.rows.length, 1);
-    assert.deepEqual(parsed.rows[0]?.assignees, [
-      "סמיון קיפניס",
-      "סרגיי גורינוב",
-    ]);
-    assert.deepEqual(parsed.rows[0]?.locations, [
-      "בניין A / קומה 36 / עמדה 1A",
-      "בניין A / קומה 36 / עמדה 2A",
-    ]);
+    const parsed = parseMissionsImportContent(csv, "unordered.csv");
+    assert.ok("error" in parsed);
+    assert.equal(parsed.message, `${MISSING_LOCATION_ORDER_PREFIX}בדיקת כיבוי אש | סיור`);
+  });
 
-    const groups = groupMissionChecklistItems(parsed.rows[0]!.checklistItems);
-    assert.equal(groups.length, 1);
-    assert.equal(groups[0]?.title, "בדיקות");
-    assert.equal(groups[0]?.items.length, 1);
-    assert.deepEqual(groups[0]?.locations, [
-      "בניין A / קומה 36 / עמדה 1A",
-      "בניין A / קומה 36 / עמדה 2A",
-    ]);
+  it("accepts a partly ordered export only when every location row has an order", () => {
+    const csv = [
+      "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name",
+      '1,"בדיקה","בניין A / קומה 1",1,"בניין A / קומה 1",1,"בדוק"',
+      '1,"בדיקה","בניין A / קומה 2",,"בניין A / קומה 2",1,"בדוק"',
+    ].join("\n");
+    const parsed = parseMissionsImportContent(csv, "partial.csv");
+    assert.ok("error" in parsed);
+    assert.equal(parsed.message, `${MISSING_LOCATION_ORDER_PREFIX}בדיקה`);
   });
 
   it("preserves separate location checklists when their questions differ", () => {
     const csv = [
-      "source_index,assignment_name,building,location,checklist_title,checklist_order,checklist_name,field_type",
-      '1,"בדיקת אל פסק","בניין A","בניין A / קומה 36","בניין A / קומה 36",1,"בדוק לוח 1",checkbox',
-      '1,"בדיקת אל פסק","בניין A","בניין A / קומה 35","בניין A / קומה 35",1,"בדוק ארון תקשורת",checkbox',
+      "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
+      '1,"בדיקת אל פסק","בניין A","בניין A / קומה 36",1,"בניין A / קומה 36",1,"בדוק לוח 1",checkbox',
+      '1,"בדיקת אל פסק","בניין A","בניין A / קומה 35",2,"בניין A / קומה 35",1,"בדוק ארון תקשורת",checkbox',
     ].join("\n");
 
     const parsed = parseMissionsImportContent(csv, "multiple-checklists.csv");
@@ -319,8 +316,9 @@ describe("scheduled missions CSV import", () => {
   it("resolves and retains every imported mission location", () => {
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,building,location,checklist_title,checklist_order,checklist_name,field_type",
-        '1,"בדיקה","בניין A","בניין A / קומה 1;בניין A / קומה 2","בדיקות",1,"בדוק",checkbox',
+        "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
+        '1,"בדיקה","בניין A","בניין A / קומה 1",1,"בדיקות",1,"בדוק",checkbox',
+        '1,"בדיקה","בניין A","בניין A / קומה 2",2,"בדיקות",1,"בדוק",checkbox',
       ].join("\n"),
       "locations.csv",
     );
@@ -418,9 +416,11 @@ describe("scheduled missions CSV import", () => {
     const parsed = parseMissionsImportContent(
       [
         "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
-        `1,"סיור","${tank}",,"${tank}",1,"בדוק מאגר",checkbox`,
-        `1,"סיור","${pumps.join(";")}",,"${pumps.join(" | ")}",1,"עובד",checkbox`,
-        `1,"סיור","${pumps.join(";")}",,"${pumps.join(" | ")}",2,"רעש",checkbox`,
+        `1,"סיור","${tank}",1,"${tank}",1,"בדוק מאגר",checkbox`,
+        `1,"סיור","${pumps[0]}",2,"${pumps.join(" | ")}",1,"עובד",checkbox`,
+        `1,"סיור","${pumps[0]}",2,"${pumps.join(" | ")}",2,"רעש",checkbox`,
+        `1,"סיור","${pumps[1]}",3,"${pumps.join(" | ")}",1,"עובד",checkbox`,
+        `1,"סיור","${pumps[1]}",3,"${pumps.join(" | ")}",2,"רעש",checkbox`,
       ].join("\n"),
       "pumps.csv",
     );

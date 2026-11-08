@@ -607,6 +607,9 @@ export function parseMissionFrequency(value: string): ParsedMissionSchedule {
   };
 }
 
+/** Parse error message prefix; the rest lists the affected mission titles. */
+export const MISSING_LOCATION_ORDER_PREFIX = "__missing_location_order__:";
+
 export function parseMissionsImportContent(
   content: string,
   fileName: string,
@@ -860,6 +863,29 @@ export function parseMissionsImportContent(
   }
 
   if (rows.length === 0) return { error: "empty" };
+
+  // The exporter reads each assignment's location order from Visitt's "סדר"
+  // step. When that step fails, it still writes the file but leaves
+  // location_order empty, and the import would silently save the wrong order.
+  // So a multi-location mission from the exporter must carry it on every row.
+  if (checklistTitleIndex >= 0 && locationsIndex >= 0) {
+    const unordered = rows.filter(
+      (row) =>
+        row.locations.length > 1 &&
+        row.checklistItems.some(
+          (item) => (item.locations?.length ?? 0) > 0 && item.locationOrder == null,
+        ),
+    );
+    if (unordered.length > 0) {
+      return {
+        error: "invalid",
+        message: `${MISSING_LOCATION_ORDER_PREFIX}${unordered
+          .map((row) => row.title)
+          .join(" | ")}`,
+      };
+    }
+  }
+
   for (const row of rows) {
     row.checklistItems = collapseLocationChecklistItems(
       row.checklistItems,
