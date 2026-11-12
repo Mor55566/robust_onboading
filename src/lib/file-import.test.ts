@@ -123,6 +123,45 @@ describe("file series import (documents CSV, series-only)", () => {
     assert.equal(resolveExpirationDate("29/9/22", null, 2376), "2022-09-29");
   });
 
+  it("reads the תיאור column, empty cells as null", () => {
+    const parsed = parseFilesImportContent(
+      [
+        '"#","מזהה","נכס","שם","תיאור"',
+        '1,"a","TOU Towers","With note","  נדחה בחודש  "',
+        '2,"b","TOU Towers","No note",""',
+      ].join("\n"),
+      "files.csv",
+    );
+    assert.equal("rows" in parsed, true);
+    if (!("rows" in parsed)) return;
+    assert.deepEqual(
+      parsed.rows.map((row) => row.description),
+      ["נדחה בחודש", null],
+    );
+  });
+
+  it("leaves description out when the file has no תיאור column", () => {
+    const parsed = parseFilesImportContent(
+      ['"#","מזהה","נכס","שם"', '1,"a","TOU Towers","Doc"'].join("\n"),
+      "files.csv",
+    );
+    assert.equal("rows" in parsed, true);
+    if (!("rows" in parsed)) return;
+    assert.equal(parsed.rows[0]?.description, undefined);
+  });
+
+  it("carries the description onto the series import item", () => {
+    const result = resolveFileImportRows({
+      rows: [fileRow({ externalId: "visitt-7", title: "Doc", description: "בוצע" })],
+      complexId: "complex-1",
+      complexes,
+      existing: [],
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.items[0]?.description, "בוצע");
+  });
+
   it("carries the resolved end date onto the series import item", () => {
     const result = resolveFileImportRows({
       rows: [

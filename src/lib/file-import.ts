@@ -12,7 +12,7 @@ const DEFAULT_TAG_COLOR = "#3b82f6";
 
 export const FILE_TAG_IMPORT_HEADERS = ["שם התגית", "צבע"] as const;
 
-export const FILE_IMPORT_HEADERS = ["#", "מזהה", "נכס", "שם", "תגית", "שייך מסמך ל"] as const;
+export const FILE_IMPORT_HEADERS = ["#", "מזהה", "נכס", "שם", "תגית", "תיאור", "שייך מסמך ל"] as const;
 
 export type FileTagImportRow = {
   rowNumber: number;
@@ -32,6 +32,11 @@ export type FileImportRow = {
    * "תוקף" (see resolveExpirationDate). Null when the row has no end date.
    */
   expirationDate?: string | null;
+  /**
+   * The "תיאור" cell. Null when the column is there but the cell is empty;
+   * left out when the file has no description column.
+   */
+  description?: string | null;
 };
 
 export type ImportComplex = { id: string; name: string };
@@ -302,6 +307,7 @@ export function parseFilesImportContent(
     "end_date",
   ]);
   const validityIndex = findHeaderIndex(header, ["תוקף", "validity", "duration"]);
+  const descriptionIndex = findHeaderIndex(header, ["תיאור", "description"]);
 
   // The "נכס" column is optional: rows always go to the complex selected in
   // the header, and the column only serves as a cross-check against it.
@@ -344,7 +350,7 @@ export function parseFilesImportContent(
           )
         : null;
 
-    rows.push({
+    const row: FileImportRow = {
       rowNumber,
       externalId,
       title,
@@ -352,7 +358,11 @@ export function parseFilesImportContent(
       tag,
       resident,
       expirationDate,
-    });
+    };
+    if (descriptionIndex >= 0) {
+      row.description = (cells[descriptionIndex] ?? "").trim() || null;
+    }
+    rows.push(row);
   }
 
   if (rows.length === 0) return { error: "empty" };
@@ -440,6 +450,8 @@ export type ResolvedFileImportRow = {
   tagIds: string[];
   residentId: string | null;
   expirationDate: string | null;
+  /** Written to the current version; null leaves its description as it is. */
+  description: string | null;
 };
 
 // One cell can name several tags: "כיבוי אש, גנרטורים" → two tags.
@@ -591,6 +603,7 @@ export function resolveFileImportRows(options: {
       tagIds,
       residentId: resolvedResident.id,
       expirationDate: row.expirationDate ?? null,
+      description: row.description ?? null,
     });
   }
 

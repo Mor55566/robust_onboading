@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  applyNextRunToSchedule,
   buildMissionsCsvTemplate,
   collapseLocationChecklistItems,
   groupMissionChecklistItems,
   MISSING_LOCATION_ORDER_PREFIX,
+  MISSING_NEXT_RUN_PREFIX,
   missionChecklistSlots,
   parseMissionFrequency,
   parseMissionImportDate,
+  parseMissionNextRun,
   parseMissionsImportContent,
   resolveMissionImportRows,
 } from "./mission-import";
@@ -131,11 +134,11 @@ describe("scheduled missions CSV import", () => {
 
   it("rejects a multi-location export without location_order (the exporter missed the סדר step)", () => {
     const csv = [
-      "source_index,assignment_name,assignees,location,checklist_title,checklist_order,checklist_name,field_type",
-      '1,"בדיקת כיבוי אש","סמיון קיפניס","בניין A / קומה 36 / עמדה 1A","בניין A / קומה 36 / עמדה 1A",1,"בדוק את העמדה",multi_select',
-      '1,"בדיקת כיבוי אש","סמיון קיפניס","בניין A / קומה 36 / עמדה 2A","בניין A / קומה 36 / עמדה 2A",1,"בדוק את העמדה",multi_select',
-      '2,"בדיקה אחת","סמיון קיפניס","בניין A / קומה 1","בניין A / קומה 1",1,"בדוק",checkbox',
-      '3,"סיור","סמיון קיפניס","בניין A / קומה 1;בניין A / קומה 2","בדיקות",1,"בדוק",checkbox',
+      "source_index,assignment_name,assignees,location,checklist_title,checklist_order,checklist_name,field_type,next_run",
+      '1,"בדיקת כיבוי אש","סמיון קיפניס","בניין A / קומה 36 / עמדה 1A","בניין A / קומה 36 / עמדה 1A",1,"בדוק את העמדה",multi_select,2026-11-15',
+      '1,"בדיקת כיבוי אש","סמיון קיפניס","בניין A / קומה 36 / עמדה 2A","בניין A / קומה 36 / עמדה 2A",1,"בדוק את העמדה",multi_select,2026-11-15',
+      '2,"בדיקה אחת","סמיון קיפניס","בניין A / קומה 1","בניין A / קומה 1",1,"בדוק",checkbox,2026-11-15',
+      '3,"סיור","סמיון קיפניס","בניין A / קומה 1;בניין A / קומה 2","בדיקות",1,"בדוק",checkbox,2026-11-15',
     ].join("\n");
 
     const parsed = parseMissionsImportContent(csv, "unordered.csv");
@@ -145,9 +148,9 @@ describe("scheduled missions CSV import", () => {
 
   it("accepts a partly ordered export only when every location row has an order", () => {
     const csv = [
-      "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name",
-      '1,"בדיקה","בניין A / קומה 1",1,"בניין A / קומה 1",1,"בדוק"',
-      '1,"בדיקה","בניין A / קומה 2",,"בניין A / קומה 2",1,"בדוק"',
+      "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,next_run",
+      '1,"בדיקה","בניין A / קומה 1",1,"בניין A / קומה 1",1,"בדוק",2026-11-15',
+      '1,"בדיקה","בניין A / קומה 2",,"בניין A / קומה 2",1,"בדוק",2026-11-15',
     ].join("\n");
     const parsed = parseMissionsImportContent(csv, "partial.csv");
     assert.ok("error" in parsed);
@@ -156,9 +159,9 @@ describe("scheduled missions CSV import", () => {
 
   it("preserves separate location checklists when their questions differ", () => {
     const csv = [
-      "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
-      '1,"בדיקת אל פסק","בניין A","בניין A / קומה 36",1,"בניין A / קומה 36",1,"בדוק לוח 1",checkbox',
-      '1,"בדיקת אל פסק","בניין A","בניין A / קומה 35",2,"בניין A / קומה 35",1,"בדוק ארון תקשורת",checkbox',
+      "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type,next_run",
+      '1,"בדיקת אל פסק","בניין A","בניין A / קומה 36",1,"בניין A / קומה 36",1,"בדוק לוח 1",checkbox,2026-11-15',
+      '1,"בדיקת אל פסק","בניין A","בניין A / קומה 35",2,"בניין A / קומה 35",1,"בדוק ארון תקשורת",checkbox,2026-11-15',
     ].join("\n");
 
     const parsed = parseMissionsImportContent(csv, "multiple-checklists.csv");
@@ -249,10 +252,10 @@ describe("scheduled missions CSV import", () => {
     // checklist; with location_order they must stay separate and ordered.
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
-        '1,"סיור","בניין A / קומה 2",3,"בניין A / קומה 2",1,"בדוק",checkbox',
-        '1,"סיור","בניין A / קומה 3",1,"בניין A / קומה 3",1,"בדוק",checkbox',
-        '1,"סיור","בניין A / קומה 1",2,"בניין A / קומה 1",1,"בדוק",checkbox',
+        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type,next_run",
+        '1,"סיור","בניין A / קומה 2",3,"בניין A / קומה 2",1,"בדוק",checkbox,2026-11-15',
+        '1,"סיור","בניין A / קומה 3",1,"בניין A / קומה 3",1,"בדוק",checkbox,2026-11-15',
+        '1,"סיור","בניין A / קומה 1",2,"בניין A / קומה 1",1,"בדוק",checkbox,2026-11-15',
       ].join("\n"),
       "ordered.csv",
     );
@@ -268,10 +271,10 @@ describe("scheduled missions CSV import", () => {
   it("parses conditional fields from the exporter's condition columns", () => {
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,checklist_title,checklist_order,checklist_name,field_type,options,is_conditional,condition_parent_order,condition_parent_name,condition_option",
-        '1,"סיור","גג",1,"עובד",multi_select,"[""כן"",""לא""]",no,,,',
-        '1,"סיור","גג",2,"טמפרטורה",number,,yes,1,"עובד","כן"',
-        '1,"סיור","גג",3,"רעש",multi_select,"[""כן"",""לא""]",yes,,,"כן"',
+        "source_index,assignment_name,checklist_title,checklist_order,checklist_name,field_type,options,is_conditional,condition_parent_order,condition_parent_name,condition_option,next_run",
+        '1,"סיור","גג",1,"עובד",multi_select,"[""כן"",""לא""]",no,,,,2026-11-15',
+        '1,"סיור","גג",2,"טמפרטורה",number,,yes,1,"עובד","כן",2026-11-15',
+        '1,"סיור","גג",3,"רעש",multi_select,"[""כן"",""לא""]",yes,,,"כן",2026-11-15',
       ].join("\n"),
       "conditions.csv",
     );
@@ -303,8 +306,8 @@ describe("scheduled missions CSV import", () => {
     const location = "קומה 36 / גלריה 1/ מפוח R1A / יניקה משרותים קומות 26-34 , קומות 10 עד מינוס 4";
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,location,location_order,checklist_title,checklist_name",
-        `1,"סיור","${location}",1,"${location}","בדוק"`,
+        "source_index,assignment_name,location,location_order,checklist_title,checklist_name,next_run",
+        `1,"סיור","${location}",1,"${location}","בדוק",2026-11-15`,
       ].join("\n"),
       "comma.csv",
     );
@@ -316,9 +319,9 @@ describe("scheduled missions CSV import", () => {
   it("resolves and retains every imported mission location", () => {
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
-        '1,"בדיקה","בניין A","בניין A / קומה 1",1,"בדיקות",1,"בדוק",checkbox',
-        '1,"בדיקה","בניין A","בניין A / קומה 2",2,"בדיקות",1,"בדוק",checkbox',
+        "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type,next_run",
+        '1,"בדיקה","בניין A","בניין A / קומה 1",1,"בדיקות",1,"בדוק",checkbox,2026-11-15',
+        '1,"בדיקה","בניין A","בניין A / קומה 2",2,"בדיקות",1,"בדוק",checkbox,2026-11-15',
       ].join("\n"),
       "locations.csv",
     );
@@ -363,9 +366,9 @@ describe("scheduled missions CSV import", () => {
     const missing = "בניין B / קומה 35 < קומה 35 / גרעין < קומה 35 / גריען / עמדה 3B";
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
-        `1,"סיור","בניין A, בניין B","${roof}",1,"${roof}",1,"בדוק",checkbox`,
-        `1,"סיור","בניין A, בניין B","${missing}",2,"${missing}",1,"בדוק",checkbox`,
+        "source_index,assignment_name,building,location,location_order,checklist_title,checklist_order,checklist_name,field_type,next_run",
+        `1,"סיור","בניין A, בניין B","${roof}",1,"${roof}",1,"בדוק",checkbox,2026-11-15`,
+        `1,"סיור","בניין A, בניין B","${missing}",2,"${missing}",1,"בדוק",checkbox,2026-11-15`,
       ].join("\n"),
       "prefixed.csv",
     );
@@ -415,12 +418,12 @@ describe("scheduled missions CSV import", () => {
     const tank = "בניין A / קומה 35 < קומה 35 / גג טכני < קומה 35 / גג טכני / מאגר מים ממוחזרים";
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
-        `1,"סיור","${tank}",1,"${tank}",1,"בדוק מאגר",checkbox`,
-        `1,"סיור","${pumps[0]}",2,"${pumps.join(" | ")}",1,"עובד",checkbox`,
-        `1,"סיור","${pumps[0]}",2,"${pumps.join(" | ")}",2,"רעש",checkbox`,
-        `1,"סיור","${pumps[1]}",3,"${pumps.join(" | ")}",1,"עובד",checkbox`,
-        `1,"סיור","${pumps[1]}",3,"${pumps.join(" | ")}",2,"רעש",checkbox`,
+        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type,next_run",
+        `1,"סיור","${tank}",1,"${tank}",1,"בדוק מאגר",checkbox,2026-11-15`,
+        `1,"סיור","${pumps[0]}",2,"${pumps.join(" | ")}",1,"עובד",checkbox,2026-11-15`,
+        `1,"סיור","${pumps[0]}",2,"${pumps.join(" | ")}",2,"רעש",checkbox,2026-11-15`,
+        `1,"סיור","${pumps[1]}",3,"${pumps.join(" | ")}",1,"עובד",checkbox,2026-11-15`,
+        `1,"סיור","${pumps[1]}",3,"${pumps.join(" | ")}",2,"רעש",checkbox,2026-11-15`,
       ].join("\n"),
       "pumps.csv",
     );
@@ -473,8 +476,8 @@ describe("scheduled missions CSV import", () => {
   it("maps an imported equipment leaf to its selectable floor or area", () => {
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,building,location,checklist_title,checklist_order,checklist_name,field_type",
-        '1,"בדיקה","בניין A","בניין A / קומה 36 < קומה 36 / גרעין < קומה 36 / גרעין / עמדת כיבוי אש מס\' 1A","בדיקות",1,"בדוק",checkbox',
+        "source_index,assignment_name,building,location,checklist_title,checklist_order,checklist_name,field_type,next_run",
+        '1,"בדיקה","בניין A","בניין A / קומה 36 < קומה 36 / גרעין < קומה 36 / גרעין / עמדת כיבוי אש מס\' 1A","בדיקות",1,"בדוק",checkbox,2026-11-15',
       ].join("\n"),
       "equipment-location.csv",
     );
@@ -587,10 +590,10 @@ describe("checklist slots in Visitt's order", () => {
   it("orders each location of a card by its location_order across cards", () => {
     const parsed = parseMissionsImportContent(
       [
-        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type",
-        '1,"סיור","גג / צ\'ילר 1",3,"צ\'ילרים",1,"עובד",checkbox',
-        '1,"סיור","גג / צ\'ילר 2",1,"צ\'ילרים",1,"עובד",checkbox',
-        '1,"סיור","חדר חשמל",2,"חדר חשמל",1,"לוח",checkbox',
+        "source_index,assignment_name,location,location_order,checklist_title,checklist_order,checklist_name,field_type,next_run",
+        '1,"סיור","גג / צ\'ילר 1",3,"צ\'ילרים",1,"עובד",checkbox,2026-11-15',
+        '1,"סיור","גג / צ\'ילר 2",1,"צ\'ילרים",1,"עובד",checkbox,2026-11-15',
+        '1,"סיור","חדר חשמל",2,"חדר חשמל",1,"לוח",checkbox,2026-11-15',
       ].join("\n"),
       "ordered.csv",
     );
@@ -600,4 +603,135 @@ describe("checklist slots in Visitt's order", () => {
       [["צ'ילרים", "גג / צ'ילר 2"], ["חדר חשמל", "חדר חשמל"], ["צ'ילרים", "גג / צ'ילר 1"]],
     );
   });
+});
+
+// Mirrors missions_cron's fetchDueTemplates for "custom" schedules: does the
+// cron open this template on `date`, given its created_at (anchor) date?
+function cronOpensCustom(
+  schedule: ReturnType<typeof parseMissionFrequency>,
+  anchorDate: string,
+  date: string,
+): boolean {
+  const idx = (iso: string) => Math.floor(Date.parse(`${iso}T00:00:00Z`) / 86_400_000);
+  const dow = (i: number) => (((i % 7) + 4) % 7 + 7) % 7;
+  const n = schedule.intervalCount!;
+  const today = idx(date);
+  const anchor = idx(anchorDate);
+  if (schedule.intervalUnit === "day") {
+    return today >= anchor && (today - anchor) % n === 0;
+  }
+  if (schedule.intervalUnit === "week") {
+    if (dow(today) !== schedule.weekday) return false;
+    const first = anchor + ((schedule.weekday! - dow(anchor) + 7) % 7);
+    return today >= first && ((today - first) / 7) % n === 0;
+  }
+  const [ty, tm, td] = date.split("-").map(Number) as [number, number, number];
+  const [ay, am] = anchorDate.split("-").map(Number) as [number, number];
+  return (
+    today >= anchor &&
+    ((ty - ay) * 12 + (tm - am)) % n === 0 &&
+    td === schedule.startDayOfMonth
+  );
+}
+
+describe("next run → missions_cron schedule fields", () => {
+  it("rejects an exporter file whose next run is missing or unreadable", () => {
+    const header = "source_index,assignment_name,is_paused,checklist_title,checklist_name,next_run";
+    const csv = [
+      header,
+      '1,"תקין",no,"בדיקות","בדוק",2026-11-15',
+      '2,"ריק",no,"בדיקות","בדוק",',
+      '3,"זבל",no,"בדיקות","בדוק",ריצה הבאה',
+      '4,"מושהית",yes,"בדיקות","בדוק",',
+    ].join("\n");
+    const parsed = parseMissionsImportContent(csv, "export.csv");
+    assert.ok("error" in parsed);
+    assert.equal(parsed.message, `${MISSING_NEXT_RUN_PREFIX}ריק | זבל`);
+  });
+
+  it("rejects an exporter file with no next_run column at all", () => {
+    const parsed = parseMissionsImportContent(
+      'source_index,assignment_name,checklist_title,checklist_name\n1,"ישן","בדיקות","בדוק"',
+      "old-export.csv",
+    );
+    assert.ok("error" in parsed);
+    assert.equal(parsed.message, `${MISSING_NEXT_RUN_PREFIX}ישן`);
+  });
+
+  it("parses the exporter's ISO date and Visitt's US date", () => {
+    assert.equal(parseMissionNextRun("2026-11-15"), "2026-11-15");
+    assert.equal(parseMissionNextRun("11/15/26"), "2026-11-15");
+    assert.equal(parseMissionNextRun(""), null);
+    assert.equal(parseMissionNextRun("not a date"), null);
+  });
+
+  it("reads next_run from exporter rows", () => {
+    const parsed = parseMissionsImportContent(
+      "source_index,assignment_name,frequency,next_run,checklist_name\n1,בדיקה,שבועית,2026-11-15,א\n1,בדיקה,שבועית,2026-11-15,ב",
+      "export.csv",
+    );
+    assert.ok(!("error" in parsed));
+    assert.equal(parsed.rows[0]?.nextRun, "2026-11-15");
+    const resolved = resolveMissionImportRows({
+      rows: parsed.rows,
+      buildings: [], floorsByBuilding: new Map(), areasByBuilding: new Map(),
+      users: [], categories: [], fallbackOpenedByUserId: "fallback",
+    });
+    assert.ok(resolved.ok);
+    // 15/11/26 is a Sunday.
+    assert.equal(resolved.rows[0]?.schedule.weekday, 0);
+  });
+
+  it("sets the weekday of weekly missions", () => {
+    // 2026-11-18 is a Wednesday.
+    const { schedule, anchorAt } = applyNextRunToSchedule(
+      parseMissionFrequency("שבועית"), "2026-11-18", null,
+    );
+    assert.equal(schedule.weekday, 3);
+    assert.equal(anchorAt, null);
+  });
+
+  it("sets day of month (and month for yearly)", () => {
+    const monthly = applyNextRunToSchedule(parseMissionFrequency("חודשית"), "2026-12-17", null);
+    assert.equal(monthly.schedule.startDayOfMonth, 17);
+    assert.equal(monthly.anchorAt, null);
+    const yearly = applyNextRunToSchedule(parseMissionFrequency("שנתית"), "2027-03-05", null);
+    assert.equal(yearly.schedule.startDayOfMonth, 5);
+    assert.equal(yearly.schedule.startMonth, 3);
+  });
+
+  it("leaves schedules alone without a next run", () => {
+    const base = parseMissionFrequency("חודשית");
+    const result = applyNextRunToSchedule(base, null, null);
+    assert.equal(result.schedule, base);
+    assert.equal(result.anchorAt, null);
+  });
+
+  for (const frequency of ["תלת חודשית", "דו-חודשית", "3 weeks", "2 weeks", "10 days", "1 week"]) {
+    it(`re-phases "${frequency}" so the cron opens on the next run`, () => {
+      const now = new Date("2026-11-10T09:00:00Z");
+      for (const nextRun of ["2026-11-15", "2027-01-04", "2026-12-31"]) {
+        for (const createdAt of [null, "2023-04-11T09:08:00+03:00", "2026-11-09T09:00:00+03:00"]) {
+          const { schedule, anchorAt } = applyNextRunToSchedule(
+            parseMissionFrequency(frequency), nextRun, createdAt, now,
+          );
+          const anchorDate = (anchorAt ?? createdAt)!.slice(0, 10);
+          const label = `${frequency} ${nextRun} ${createdAt}`;
+          assert.ok(cronOpensCustom(schedule, anchorDate, nextRun), label);
+          // The anchor never moves past the real creation date (or today).
+          assert.ok(anchorDate <= (createdAt ?? "2026-11-10").slice(0, 10), label);
+          // …and doesn't open it earlier within the interval before it.
+          const day = 86_400_000;
+          const n = schedule.intervalCount!;
+          const stepDays =
+            schedule.intervalUnit === "day" ? n : schedule.intervalUnit === "week" ? n * 7 : n * 28;
+          const from = Math.max(Date.parse("2026-11-11"), Date.parse(nextRun) - (stepDays - 1) * day);
+          for (let t = from; t < Date.parse(nextRun); t += day) {
+            const date = new Date(t).toISOString().slice(0, 10);
+            assert.ok(!cronOpensCustom(schedule, anchorDate, date), `${label} opened on ${date}`);
+          }
+        }
+      }
+    });
+  }
 });

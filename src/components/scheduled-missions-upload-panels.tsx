@@ -28,6 +28,7 @@ import {
   buildMissionsCsvTemplate,
   buildMissionsExcelTemplate,
   MISSING_LOCATION_ORDER_PREFIX,
+  MISSING_NEXT_RUN_PREFIX,
   parseMissionsImportContent,
   type MissionImportRow,
 } from "@/lib/mission-import";
@@ -315,6 +316,17 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
               error: parsed.error,
               message: t(dict.superAdmin.scheduledMissionsUploadMissingLocationOrder, {
                 missions: parsed.message.slice(MISSING_LOCATION_ORDER_PREFIX.length),
+              }),
+            };
+          }
+          if (
+            "error" in parsed &&
+            parsed.message?.startsWith(MISSING_NEXT_RUN_PREFIX)
+          ) {
+            return {
+              error: parsed.error,
+              message: t(dict.superAdmin.scheduledMissionsUploadMissingNextRun, {
+                missions: parsed.message.slice(MISSING_NEXT_RUN_PREFIX.length),
               }),
             };
           }

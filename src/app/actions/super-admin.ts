@@ -2888,6 +2888,9 @@ export async function importScheduledMissionsAction(
         intervalCount,
         intervalUnit,
       } = row.schedule;
+      // From the file's next run (see applyNextRunToSchedule); null = keep.
+      const startDayOfMonth = row.schedule.startDayOfMonth ?? null;
+      const startMonth = row.schedule.startMonth ?? null;
 
       if (existingMissionId) {
         queries.push(sql`
@@ -2902,6 +2905,8 @@ export async function importScheduledMissionsAction(
             title = ${row.title},
             description = ${row.description},
             recurrence_period_start = ${row.startDate}::timestamptz,
+            -- missions_cron phases "every N" cadences from created_at.
+            created_at = COALESCE(${row.scheduleAnchorAt}::timestamptz, created_at),
             -- A mission in the file is wanted: one hidden earlier ("delete
             -- missions" in onboarding, or deleted in the app) is shown again.
             is_hidden = false,
@@ -2918,6 +2923,8 @@ export async function importScheduledMissionsAction(
             weekday = ${weekday},
             interval_count = ${intervalCount},
             interval_unit = ${intervalUnit},
+            start_day_of_month = COALESCE(${startDayOfMonth}::smallint, start_day_of_month),
+            start_month = COALESCE(${startMonth}::smallint, start_month),
             skip_holidays = ${row.skipHolidays},
             paused_at = CASE
               WHEN ${row.isPaused}::boolean IS NULL THEN paused_at
@@ -2965,7 +2972,7 @@ export async function importScheduledMissionsAction(
             ${row.title},
             ${row.description},
             ${row.startDate}::timestamptz,
-            COALESCE(${row.createdAt}::timestamptz, now()),
+            COALESCE(${row.scheduleAnchorAt}::timestamptz, ${row.createdAt}::timestamptz, now()),
             COALESCE(${row.createdAt}::timestamptz, now())
           )
         `);
@@ -2978,6 +2985,8 @@ export async function importScheduledMissionsAction(
             weekday,
             interval_count,
             interval_unit,
+            start_day_of_month,
+            start_month,
             skip_holidays,
             paused_at
           )
@@ -2988,6 +2997,8 @@ export async function importScheduledMissionsAction(
             ${weekday},
             ${intervalCount},
             ${intervalUnit},
+            ${startDayOfMonth}::smallint,
+            ${startMonth}::smallint,
             ${row.skipHolidays},
             CASE WHEN ${row.isPaused}::boolean THEN now() ELSE NULL END
           )
@@ -4057,6 +4068,19 @@ export async function importFilesAction(
         AND to_char(f.expiration_date, 'MM-DD') = to_char(${item.expirationDate}::date, 'MM-DD')
         AND extract(year FROM f.expiration_date)::int % 100
           = extract(year FROM ${item.expirationDate}::date)::int % 100
+    `);
+  }
+
+  // "תיאור" belongs to a version, so it goes on the current one. An empty
+  // cell never clears a description someone already wrote in the app.
+  for (const item of resolved.items) {
+    if (item.action !== "update" || !item.description) continue;
+    queries.push(sql`
+      UPDATE files f
+      SET description = ${item.description}, updated_at = now()
+      WHERE f.series_id = ${item.id}
+        AND f.version = (SELECT max(version) FROM files WHERE series_id = ${item.id})
+        AND f.description IS DISTINCT FROM ${item.description}
     `);
   }
 

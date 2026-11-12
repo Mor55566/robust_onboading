@@ -218,6 +218,8 @@ export const en = {
       "Could not find required columns (מזהה and שם). Use the template or a Visitt export.",
     scheduledMissionsUploadMissingLocationOrder:
       "The file is missing the location order (location_order) for missions with several locations: {missions}. The export script could not read the \"סדר\" step in Visitt, probably because Visitt changed. Do not upload this file — update the script and run the export again.",
+    scheduledMissionsUploadMissingNextRun:
+      "The file is missing the next run (next_run) for these missions, or it could not be read: {missions}. The export script could not read \"ריצה הבאה\" in Visitt, probably because Visitt changed. Do not upload this file — update the script and run the export again.",
     scheduledMissionsUploadInvalidRow:
       "Some rows are missing מזהה or שם.",
     scheduledMissionsUploadSuccess: "Imported {count} scheduled missions",

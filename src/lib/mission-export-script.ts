@@ -443,15 +443,30 @@ export const MISSION_EXPORT_SCRIPT = `/*
 
     if (!labelElement) return '';
 
-    let sibling = labelElement.nextElementSibling;
+    // Walk all sibling nodes, not just elements: some values (e.g. "ריצה הבאה")
+    // are a bare text node right after the label span.
+    let sibling = labelElement.nextSibling;
 
     while (sibling) {
       const value = clean(sibling.textContent);
       if (value) return value;
-      sibling = sibling.nextElementSibling;
+      sibling = sibling.nextSibling;
     }
 
     return '';
+  }
+
+  // Visitt shows "ריצה הבאה" as D/M/YY (e.g. 15/11/26). Export it as
+  // YYYY-MM-DD so the importer can't mistake it for a US M/D/YY date.
+  function toIsoDate(value) {
+    const match = value.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{2,4})$/);
+    if (!match) return value;
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    let year = Number(match[3]);
+    if (year < 100) year += 2000;
+    const pad = (n) => String(n).padStart(2, '0');
+    return year + '-' + pad(month) + '-' + pad(day);
   }
 
   // A paused assignment shows a HintBanner with the pause icon and the text
@@ -796,6 +811,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
       skip_on_holidays: labelledValue(modal, 'התנהגות בחגים:') === 'מדולגת בחגים',
       is_paused: extractPausedState(modal),
       assigned_users: labelledValue(modal, 'משתמש משויך:'),
+      next_run: toIsoDate(labelledValue(modal, 'ריצה הבאה:')),
     };
 
     // Every Visitt card containing its own "מיקומים" and "בדיקות" headings is
@@ -948,6 +964,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
       'skip_on_holidays',
       'is_paused',
       'assigned_users',
+      'next_run',
       'location',
       'location_order',
       'checklist_title',

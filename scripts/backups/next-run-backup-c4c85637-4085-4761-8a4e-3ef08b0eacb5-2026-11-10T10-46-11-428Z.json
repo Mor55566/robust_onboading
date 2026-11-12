@@ -1,0 +1,82 @@
+[
+  {
+    "id": "17b8b67a-0e6c-4f8d-9910-fedca3d0e15f",
+    "title": "בדיקות במת מספריים",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:57:06.081Z"
+  },
+  {
+    "id": "026fcf5b-a1fa-40ec-a9c1-f545e5dd4e72",
+    "title": "בדיקת אינטרקום במתקן ניקוי בניין A",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:57:05.304Z"
+  },
+  {
+    "id": "a6e52311-dc56-4f64-a594-f9264213d661",
+    "title": "בדיקת אינטרקום במתקן ניקוי בניין B",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:57:05.304Z"
+  },
+  {
+    "id": "e0939dd7-9af6-4f75-b95b-36c529211553",
+    "title": "בדיקת עמדות כיבוי אש - בניין A",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:57:02.516Z"
+  },
+  {
+    "id": "8229c3d7-7703-4ef1-838d-5ef70485e938",
+    "title": "בדיקת עמדות כיבוי אש - בניין B",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:56:55.842Z"
+  },
+  {
+    "id": "53606a81-165c-4c68-97e2-1dd4e6ff8cbe",
+    "title": "בדיקת עמדות כיבוי אש - שטח משותף",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:56:48.961Z"
+  },
+  {
+    "id": "c9ddd0f3-518d-4b03-8fca-31d11c1da8e1",
+    "title": "בדיקת ציוד חירום",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:56:48.961Z"
+  },
+  {
+    "id": "9982d808-0b36-49c1-90a5-c7eca9c580d5",
+    "title": "בדיקת תאורה בפארק ובערוגות",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:56:48.961Z"
+  },
+  {
+    "id": "ecbd29c2-1bb4-4a4c-b18f-61ff380fd136",
+    "title": "ריקון מים ממדחסי אוויר - מערכת פריאקשן בניין A",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:56:37.031Z"
+  },
+  {
+    "id": "a2a79b12-2a06-4eb3-97dd-901b9067e165",
+    "title": "ריקון מים ממדחסי אוויר - מערכת פריאקשן בניין B",
+    "weekday": null,
+    "start_day_of_month": null,
+    "start_month": null,
+    "created_at": "2026-11-08T07:56:37.031Z"
+  }
+]

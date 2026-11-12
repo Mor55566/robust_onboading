@@ -63,6 +63,8 @@ export type MissionImportRow = {
   category: string;
   assignees: string[];
   startDate: string | null;
+  /** Next scheduled run as YYYY-MM-DD (Israel calendar date), or null. */
+  nextRun?: string | null;
   description: string;
   locations: string[];
   createdAt: string | null;
@@ -259,6 +261,10 @@ export type ParsedMissionSchedule = {
   weekday: number | null;
   intervalCount: number | null;
   intervalUnit: MissionScheduleIntervalUnit | null;
+  /** Month/year/custom-month: day of month the mission opens (null = keep / 1st). */
+  startDayOfMonth?: number | null;
+  /** Year: month (1-12) the mission opens (null = keep / January). */
+  startMonth?: number | null;
 };
 
 const SAMPLE_ROWS: Omit<MissionImportRow, "rowNumber">[] = [
@@ -392,6 +398,142 @@ export function parseMissionImportDate(value: string): string | null {
   const parsed = new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
+}
+
+/**
+ * Parses the "next run" cell. The exporter writes YYYY-MM-DD; Visitt's own
+ * CSV export ("ריצה הבאה") uses the same US M/D/YY format as its other dates.
+ * Returns the Israel calendar date as YYYY-MM-DD, or null.
+ */
+export function parseMissionNextRun(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const iso = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    const [year, month, day] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  const parsed = parseMissionImportDate(trimmed);
+  return parsed ? parsed.slice(0, 10) : null;
+}
+
+const MS_PER_DAY = 86_400_000;
+
+function isoDateToDayIndex(isoDate: string): number {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  return Math.floor(Date.UTC(year!, month! - 1, day!) / MS_PER_DAY);
+}
+
+function dayIndexToIsoDate(index: number): string {
+  return new Date(index * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+/** Israel (Asia/Jerusalem) calendar date of a timestamp, as YYYY-MM-DD. */
+function jerusalemIsoDate(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jerusalem",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+/**
+ * missions_cron has no "next run" column: it decides when a template opens
+ * from mission_schedules (weekday / start_day_of_month / start_month) and, for
+ * "every N" (custom) cadences, from the template's created_at date as the
+ * phase anchor. This fills those fields so the cron's next opening lands on
+ * Visitt's next run, without changing how the cron works.
+ *
+ * Returns the schedule to save, plus `anchorAt`: a created_at to store when
+ * the custom cadence needs re-phasing (null = keep created_at as is). The
+ * anchor is the latest in-phase date on or before the mission's real
+ * creation date (or today), so created_at moves by less than one interval.
+ */
+export function applyNextRunToSchedule(
+  schedule: ParsedMissionSchedule,
+  nextRun: string | null | undefined,
+  createdAt: string | null,
+  now: Date = new Date(),
+): { schedule: ParsedMissionSchedule; anchorAt: string | null } {
+  if (!nextRun) return { schedule, anchorAt: null };
+
+  const nextIdx = isoDateToDayIndex(nextRun);
+  const [nextYear, nextMonth, nextDay] = nextRun.split("-").map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  // 0=Sunday … 6=Saturday; epoch day 0 (1970-01-01) was a Thursday.
+  const nextDow = (((nextIdx % 7) + 4) % 7 + 7) % 7;
+  const n =
+    schedule.intervalCount && schedule.intervalCount > 0
+      ? schedule.intervalCount
+      : 1;
+
+  switch (schedule.frequency) {
+    case "day":
+      return { schedule, anchorAt: null };
+    case "week":
+      return { schedule: { ...schedule, weekday: nextDow }, anchorAt: null };
+    case "month":
+      return {
+        schedule: { ...schedule, startDayOfMonth: nextDay },
+        anchorAt: null,
+      };
+    case "year":
+      return {
+        schedule: { ...schedule, startDayOfMonth: nextDay, startMonth: nextMonth },
+        anchorAt: null,
+      };
+    case "custom":
+      break;
+    default:
+      return { schedule, anchorAt: null };
+  }
+
+  const reference = createdAt ? new Date(createdAt) : now;
+  const referenceDate = Number.isNaN(reference.getTime())
+    ? jerusalemIsoDate(now)
+    : jerusalemIsoDate(reference);
+  const referenceIdx = isoDateToDayIndex(referenceDate);
+
+  let anchorDate: string;
+  let nextSchedule: ParsedMissionSchedule = schedule;
+
+  if (schedule.intervalUnit === "month") {
+    nextSchedule = { ...schedule, startDayOfMonth: nextDay };
+    const [refYear, refMonth] = referenceDate.split("-").map(Number) as [number, number];
+    const nextMonthIdx = nextYear * 12 + (nextMonth - 1);
+    const refMonthIdx = refYear * 12 + (refMonth - 1);
+    // Latest month ≤ the reference month that is a whole number of
+    // intervals away from the next run's month.
+    const behind = (((nextMonthIdx - refMonthIdx) % n) + n) % n;
+    const anchorMonthIdx = refMonthIdx - (behind === 0 ? 0 : n - behind);
+    // The cron only reads the anchor's month; keep the reference day when it
+    // stays in the reference month, else use the 1st.
+    const anchorYear = Math.floor(anchorMonthIdx / 12);
+    const anchorMonth = (anchorMonthIdx % 12) + 1;
+    const day = anchorMonthIdx === refMonthIdx ? Number(referenceDate.slice(8, 10)) : 1;
+    anchorDate = `${anchorYear}-${String(anchorMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  } else {
+    const stepDays = schedule.intervalUnit === "week" ? n * 7 : n;
+    if (schedule.intervalUnit === "week") {
+      nextSchedule = { ...schedule, weekday: nextDow };
+    }
+    const behind = (((nextIdx - referenceIdx) % stepDays) + stepDays) % stepDays;
+    anchorDate = dayIndexToIsoDate(
+      referenceIdx - (behind === 0 ? 0 : stepDays - behind),
+    );
+  }
+
+  // Already in phase: leave created_at untouched.
+  if (createdAt && anchorDate === referenceDate) {
+    return { schedule: nextSchedule, anchorAt: null };
+  }
+  // Noon keeps the Israel calendar date stable whatever the DST offset.
+  return { schedule: nextSchedule, anchorAt: `${anchorDate}T12:00:00+03:00` };
 }
 
 const WEEKDAY_TOKEN_TO_NUMBER: Record<string, number> = {
@@ -609,6 +751,8 @@ export function parseMissionFrequency(value: string): ParsedMissionSchedule {
 
 /** Parse error message prefix; the rest lists the affected mission titles. */
 export const MISSING_LOCATION_ORDER_PREFIX = "__missing_location_order__:";
+/** Parse error message prefix; the rest lists the affected mission titles. */
+export const MISSING_NEXT_RUN_PREFIX = "__missing_next_run__:";
 
 export function parseMissionsImportContent(
   content: string,
@@ -648,6 +792,11 @@ export function parseMissionsImportContent(
     "תאריך התחלה",
     "start date",
     "start_date",
+  ]);
+  const nextRunIndex = findHeaderIndex(header, [
+    "next_run",
+    "next run",
+    "ריצה הבאה",
   ]);
   const descriptionIndex = findHeaderIndex(header, ["תיאור", "description"]);
   const locationsIndex = findHeaderIndex(header, ["מיקומים", "locations", "location"]);
@@ -832,6 +981,10 @@ export function parseMissionsImportContent(
         startDateIndex >= 0
           ? parseMissionImportDate(cells[startDateIndex] ?? "")
           : null,
+      nextRun:
+        nextRunIndex >= 0
+          ? parseMissionNextRun(cells[nextRunIndex] ?? "")
+          : null,
       description:
         descriptionIndex >= 0 ? (cells[descriptionIndex] ?? "").trim() : "",
       locations: rowLocations,
@@ -850,6 +1003,7 @@ export function parseMissionsImportContent(
         return { error: "invalidRow", message: `__row__:${rowNumber}` };
       }
       existing.checklistItems.push(...checklistItems);
+      existing.nextRun = existing.nextRun ?? parsedRow.nextRun;
       existing.locations = [
         ...new Set([...existing.locations, ...parsedRow.locations]),
       ];
@@ -880,6 +1034,25 @@ export function parseMissionsImportContent(
       return {
         error: "invalid",
         message: `${MISSING_LOCATION_ORDER_PREFIX}${unordered
+          .map((row) => row.title)
+          .join(" | ")}`,
+      };
+    }
+  }
+
+  if (checklistTitleIndex >= 0) {
+    // missions_cron's schedule is derived from the next run (see
+    // applyNextRunToSchedule). An exporter file whose "ריצה הבאה" came out
+    // empty or unreadable means Visitt's HTML changed: importing it would
+    // silently put missions on the wrong day, so reject it. Paused missions
+    // are exempt (Visitt may show no next run for them).
+    const withoutNextRun = rows.filter(
+      (row) => row.nextRun == null && row.isPaused !== true,
+    );
+    if (withoutNextRun.length > 0) {
+      return {
+        error: "invalid",
+        message: `${MISSING_NEXT_RUN_PREFIX}${withoutNextRun
           .map((row) => row.title)
           .join(" | ")}`,
       };
@@ -1115,6 +1288,8 @@ export type ResolvedMissionImportRow = {
   assigneeIds: string[];
   startDate: string | null;
   createdAt: string | null;
+  /** created_at to store so missions_cron's custom cadence lands on the next run (null = keep). */
+  scheduleAnchorAt: string | null;
   checklistItems: MissionImportChecklistItem[];
   /** One checklist row per location (see missionChecklistSlots). */
   checklistGroups: Array<{
@@ -1262,12 +1437,18 @@ export function resolveMissionImportRows(options: {
       }
     }
 
+    const { schedule, anchorAt: scheduleAnchorAt } = applyNextRunToSchedule(
+      parseMissionFrequency(row.frequency),
+      row.nextRun,
+      row.createdAt,
+    );
+
     resolved.push({
       rowNumber: row.rowNumber,
       externalId: row.externalId,
       title: row.title,
       description: row.description.trim() || row.title,
-      schedule: parseMissionFrequency(row.frequency),
+      schedule,
       skipHolidays: row.skipHolidays,
       isPaused: row.isPaused,
       buildingId: primaryLocation.buildingId,
@@ -1286,6 +1467,7 @@ export function resolveMissionImportRows(options: {
       assigneeIds,
       startDate: row.startDate,
       createdAt: row.createdAt,
+      scheduleAnchorAt,
       checklistItems: [...row.checklistItems].sort((a, b) => a.sortOrder - b.sortOrder),
       checklistGroups,
     });
