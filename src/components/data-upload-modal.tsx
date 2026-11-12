@@ -340,8 +340,13 @@ export function DataUploadModal<T>({
         await new Promise((resolve) => window.setTimeout(resolve, 300));
       }
       onClose();
-    } catch {
-      setError(dict.admin.uploadImportFailed);
+    } catch (error) {
+      console.error("DataUploadModal: import failed", error);
+      setError(
+        error instanceof Error && error.message
+          ? `${dict.admin.uploadImportFailed} (${error.message})`
+          : dict.admin.uploadImportFailed,
+      );
     } finally {
       setIsImporting(false);
     }

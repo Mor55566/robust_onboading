@@ -15,6 +15,7 @@ import {
   DataUploadModal,
   type ImportFailure,
   type ImportPreviewRow,
+  type ImportProgressCounts,
 } from "@/components/data-upload-modal";
 import { ScheduledMissionsImportGuideModal } from "@/components/scheduled-missions-import-guide-modal";
 import { UploadCard, UploadMessage } from "@/components/upload-card";
@@ -91,24 +92,101 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
     });
   }
 
-  async function handleImport(rows: MissionImportRow[]) {
+  async function handleImport(
+    rows: MissionImportRow[],
+    reportProgress: (percent: number, counts?: ImportProgressCounts) => void,
+  ) {
     setMessage(null);
     if (!guardDirectoryReady) return { error: GUARD_NOT_READY_MESSAGE };
     const issues = checkBuildingNames(rows.flatMap((row) => row.buildings));
     if (issues.length > 0) return { error: formatGuardBlockError(issues) };
-    const result = await importScheduledMissionsAction(complexId, rows, {
-      pauseAll,
-    });
-    if (result.error) {
-      return { error: result.error };
+    reportProgress(0);
+
+    // Sent in sequential batches: hosts cap server-action bodies (Vercel
+    // ~4.5MB) and function duration, and a full export with checklists
+    // exceeds both in one request.
+    const MAX_BATCH_ROWS = 25;
+    const MAX_BATCH_BYTES = 2_000_000;
+    // Rows without an external id are matched to existing missions by title
+    // on the server, so same-title rows must share a batch — otherwise a later
+    // batch would update a mission an earlier batch just created.
+    const groups = new Map<string, MissionImportRow[]>();
+    for (const row of rows) {
+      const key = row.externalId.trim()
+        ? `id:${row.externalId.trim()}`
+        : `title:${row.title.trim().toLowerCase().replace(/\s+/g, " ")}`;
+      const group = groups.get(key);
+      if (group) group.push(row);
+      else groups.set(key, [row]);
     }
+    const batches: MissionImportRow[][] = [];
+    let current: MissionImportRow[] = [];
+    let currentBytes = 0;
+    for (const group of groups.values()) {
+      const groupBytes = JSON.stringify(group).length;
+      if (
+        current.length > 0 &&
+        (current.length + group.length > MAX_BATCH_ROWS ||
+          currentBytes + groupBytes > MAX_BATCH_BYTES)
+      ) {
+        batches.push(current);
+        current = [];
+        currentBytes = 0;
+      }
+      current.push(...group);
+      currentBytes += groupBytes;
+    }
+    if (current.length > 0) batches.push(current);
+
+    let created = 0;
+    let updated = 0;
+    let doneRows = 0;
+    for (const batch of batches) {
+      let result: Awaited<ReturnType<typeof importScheduledMissionsAction>>;
+      try {
+        result = await importScheduledMissionsAction(complexId, batch, {
+          pauseAll,
+        });
+      } catch (error) {
+        console.error("Scheduled missions import batch failed", error);
+        result = {
+          error:
+            error instanceof Error && error.message
+              ? `${dict.admin.uploadImportFailed} (${error.message})`
+              : dict.admin.uploadImportFailed,
+        };
+      }
+      created += result.created ?? 0;
+      updated += result.updated ?? 0;
+      if (result.error) {
+        if (created + updated > 0) void refreshUploadStatus();
+        const progressNote =
+          created + updated > 0
+            ? ` (${t(dict.superAdmin.scheduledMissionsUploadSuccessDetailed, {
+                created,
+                updated,
+              })})`
+            : "";
+        return { error: `${result.error}${progressNote}` };
+      }
+      doneRows += batch.length;
+      reportProgress((doneRows / rows.length) * 100, {
+        done: doneRows,
+        total: rows.length,
+      });
+    }
+
     setMessage({
       type: "success",
       text:
-        result.success ??
-        t(dict.superAdmin.scheduledMissionsUploadSuccess, {
-          count: rows.length,
-        }),
+        updated > 0
+          ? t(dict.superAdmin.scheduledMissionsUploadSuccessDetailed, {
+              created,
+              updated,
+            })
+          : t(dict.superAdmin.scheduledMissionsUploadSuccess, {
+              count: created,
+            }),
     });
     void refreshUploadStatus();
   }
