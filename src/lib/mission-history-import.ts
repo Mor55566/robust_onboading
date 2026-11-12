@@ -671,6 +671,52 @@ function resolveStandaloneLocation(
   return null;
 }
 
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        previous[j]! + 1,
+        current[j - 1]! + 1,
+        previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length]!;
+}
+
+/**
+ * Exact name match first. Visitt names are sometimes spelled differently from
+ * the user record (e.g. "איגור פיאנקוב" vs "איגור פיניאקוב"), so fall back to
+ * the only user with the same first name whose last name is close.
+ */
+export function resolveUserIdByName(
+  name: string,
+  usersByNormalizedName: Map<string, string>,
+): string | null {
+  const normalized = normalizeLookup(name);
+  if (!normalized) return null;
+  const exact = usersByNormalizedName.get(normalized);
+  if (exact) return exact;
+
+  const [firstName, ...rest] = normalized.split(" ");
+  const lastName = rest.join(" ");
+  if (!firstName || !lastName) return null;
+
+  const sameFirstName = [...usersByNormalizedName].filter(
+    ([userName]) => userName.split(" ")[0] === firstName,
+  );
+  if (sameFirstName.length !== 1) return null;
+
+  const [userName, userId] = sameFirstName[0]!;
+  const userLastName = userName.split(" ").slice(1).join(" ");
+  if (!userLastName) return null;
+  const allowed = Math.max(1, Math.floor(Math.max(lastName.length, userLastName.length) / 2) - 1);
+  return editDistance(lastName, userLastName) <= allowed ? userId : null;
+}
+
 export function classifyMissionHistoryImportRows(options: {
   rows: MissionHistoryImportRow[];
   existingMissionsByExternalId: Map<string, string>;
@@ -686,9 +732,10 @@ export function classifyMissionHistoryImportRows(options: {
     const existingMissionId = options.existingMissionsByExternalId.get(row.externalId) ?? null;
     const template = options.templatesByNormalizedTitle.get(normalizeLookup(row.title)) ?? null;
 
-    const resolvedByUserId = row.resolvedByNameRaw
-      ? (options.usersByNormalizedName.get(normalizeLookup(row.resolvedByNameRaw)) ?? null)
-      : null;
+    const resolvedByUserId = resolveUserIdByName(
+      row.resolvedByNameRaw,
+      options.usersByNormalizedName,
+    );
 
     const groupsByLocation = new Map<string, MissionHistoryChecklistItem[]>();
     for (const item of row.checklistItems) {
@@ -758,9 +805,7 @@ export function classifyMissionHistoryImportRows(options: {
       areaId: template ? template.areaId : (fallbackLocation?.areaId ?? null),
       categoryId,
       resolvedByUserId,
-      assignedUserId: row.assignedUserRaw
-        ? (options.usersByNormalizedName.get(normalizeLookup(row.assignedUserRaw)) ?? null)
-        : null,
+      assignedUserId: resolveUserIdByName(row.assignedUserRaw, options.usersByNormalizedName),
       checklistGroups,
     };
   });

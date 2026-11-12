@@ -7,6 +7,7 @@ import {
   parseMissionHistoryImportContent,
   parseMissionHistoryStatus,
   parseOpenMissionsImportContent,
+  resolveUserIdByName,
 } from "./mission-history-import";
 
 describe("mission history checklist blob parser", () => {
@@ -387,5 +388,33 @@ describe("open missions import", () => {
     assert.equal(row.dueAt, "2027-01-15T00:00:00+03:00");
     assert.deepEqual(row.locationsRaw, ["מינוס 1 / גרעין A / חדר דחסנים"]);
     assert.deepEqual(row.checklistItems, []);
+  });
+});
+
+describe("resolveUserIdByName", () => {
+  const users = new Map([
+    ["איגור פיניאקוב", "igor"],
+    ["ארז קולישבסקי", "erez"],
+    ["הדר כהן", "hadar"],
+    ["ישראלה כהן", "israela"],
+  ]);
+
+  it("matches exact names, ignoring extra spaces", () => {
+    assert.equal(resolveUserIdByName("ארז  קולישבסקי ", users), "erez");
+  });
+
+  it("matches a differently spelled last name for a unique first name", () => {
+    assert.equal(resolveUserIdByName("איגור פיאנקוב", users), "igor");
+  });
+
+  it("does not match an unrelated last name", () => {
+    assert.equal(resolveUserIdByName("איגור רזניק", users), null);
+  });
+
+  it("does not guess when the first name is not unique or unknown", () => {
+    const withDuplicate = new Map([...users, ["איגור רזניק", "igor2"]]);
+    assert.equal(resolveUserIdByName("איגור פיאנקוב", withDuplicate), null);
+    assert.equal(resolveUserIdByName("משה כהן", users), null);
+    assert.equal(resolveUserIdByName("", users), null);
   });
 });
