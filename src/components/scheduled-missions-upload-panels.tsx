@@ -30,6 +30,7 @@ import {
   buildMissionsExcelTemplate,
   MISSING_LOCATION_ORDER_PREFIX,
   MISSING_NEXT_RUN_PREFIX,
+  UNKNOWN_FREQUENCY_PREFIX,
   parseMissionsImportContent,
   type MissionImportRow,
 } from "@/lib/mission-import";
@@ -405,6 +406,20 @@ export function ScheduledMissionsUploadPanels({ dict }: { dict: Dictionary }) {
               error: parsed.error,
               message: t(dict.superAdmin.scheduledMissionsUploadMissingNextRun, {
                 missions: parsed.message.slice(MISSING_NEXT_RUN_PREFIX.length),
+              }),
+            };
+          }
+          if (
+            "error" in parsed &&
+            parsed.message?.startsWith(UNKNOWN_FREQUENCY_PREFIX)
+          ) {
+            const rest = parsed.message.slice(UNKNOWN_FREQUENCY_PREFIX.length);
+            const separator = rest.indexOf(":");
+            return {
+              error: parsed.error,
+              message: t(dict.superAdmin.scheduledMissionsUploadUnknownFrequency, {
+                row: rest.slice(0, separator),
+                frequency: rest.slice(separator + 1),
               }),
             };
           }

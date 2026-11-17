@@ -111,7 +111,7 @@ const fmt = (field: string, value: unknown) =>
 type Change = {
   template: DbTemplate;
   nextRun: string;
-  updates: { weekday?: number; start_day_of_month?: number; start_month?: number; created_at?: string };
+  updates: { weekday?: number; end_weekday?: number; start_day_of_month?: number; start_month?: number; created_at?: string };
 };
 const changes: Change[] = [];
 const unchanged: string[] = [];
@@ -161,6 +161,7 @@ for (const [key, fileRows] of fileByTitle) {
       intervalUnit: db.interval_unit as ParsedMissionSchedule["intervalUnit"],
       startDayOfMonth: db.start_day_of_month,
       startMonth: db.start_month,
+      endWeekday: db.end_weekday,
     };
     const { schedule, anchorAt } = applyNextRunToSchedule(
       base,
@@ -170,6 +171,7 @@ for (const [key, fileRows] of fileByTitle) {
 
     const updates: Change["updates"] = {};
     if (schedule.weekday !== db.weekday && schedule.weekday != null) updates.weekday = schedule.weekday;
+    if (schedule.endWeekday !== db.end_weekday && schedule.endWeekday != null) updates.end_weekday = schedule.endWeekday;
     if ((schedule.startDayOfMonth ?? null) !== db.start_day_of_month && schedule.startDayOfMonth != null)
       updates.start_day_of_month = schedule.startDayOfMonth;
     if ((schedule.startMonth ?? null) !== db.start_month && schedule.startMonth != null)
@@ -210,7 +212,7 @@ for (const line of dbMissing) console.log(`- ${line}`);
 const windowNotes = changes.filter(
   ({ template, updates }) =>
     !template.never_closes &&
-    ((updates.weekday != null && template.end_weekday == null) ||
+    ((updates.weekday != null && updates.end_weekday == null && template.end_weekday == null) ||
       (updates.start_day_of_month != null &&
         updates.start_day_of_month !== 1 &&
         template.end_day_of_month == null)),
@@ -240,6 +242,7 @@ writeFileSync(
       id: template.id,
       title: template.title,
       weekday: template.weekday,
+      end_weekday: template.end_weekday,
       start_day_of_month: template.start_day_of_month,
       start_month: template.start_month,
       created_at: template.created_at_raw,
@@ -252,15 +255,17 @@ console.log(`\nBackup written: ${backupFile}`);
 
 const queries = [ctx()];
 for (const { template, updates } of changes) {
-  if (updates.weekday != null || updates.start_day_of_month != null || updates.start_month != null) {
+  if (updates.weekday != null || updates.end_weekday != null || updates.start_day_of_month != null || updates.start_month != null) {
     queries.push(sql`
       UPDATE mission_schedules
       SET weekday = ${updates.weekday ?? template.weekday},
+          end_weekday = ${updates.end_weekday ?? template.end_weekday},
           start_day_of_month = ${updates.start_day_of_month ?? template.start_day_of_month},
           start_month = ${updates.start_month ?? template.start_month},
           updated_at = now()
       WHERE template_mission_id = ${template.id}
         AND weekday IS NOT DISTINCT FROM ${template.weekday}::smallint
+        AND end_weekday IS NOT DISTINCT FROM ${template.end_weekday}::smallint
         AND start_day_of_month IS NOT DISTINCT FROM ${template.start_day_of_month}::smallint
         AND start_month IS NOT DISTINCT FROM ${template.start_month}::smallint
       RETURNING template_mission_id

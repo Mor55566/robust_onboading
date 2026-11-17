@@ -265,6 +265,11 @@ export type ParsedMissionSchedule = {
   startDayOfMonth?: number | null;
   /** Year: month (1-12) the mission opens (null = keep / January). */
   startMonth?: number | null;
+  /**
+   * Week: weekday the mission closes on (null = keep / Saturday). Visitt keeps
+   * a weekly mission open a full week, until the day before it reopens.
+   */
+  endWeekday?: number | null;
 };
 
 const SAMPLE_ROWS: Omit<MissionImportRow, "rowNumber">[] = [
@@ -476,7 +481,10 @@ export function applyNextRunToSchedule(
     case "day":
       return { schedule, anchorAt: null };
     case "week":
-      return { schedule: { ...schedule, weekday: nextDow }, anchorAt: null };
+      return {
+        schedule: { ...schedule, weekday: nextDow, endWeekday: (nextDow + 6) % 7 },
+        anchorAt: null,
+      };
     case "month":
       return {
         schedule: { ...schedule, startDayOfMonth: nextDay },
@@ -519,9 +527,6 @@ export function applyNextRunToSchedule(
     anchorDate = `${anchorYear}-${String(anchorMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
   } else {
     const stepDays = schedule.intervalUnit === "week" ? n * 7 : n;
-    if (schedule.intervalUnit === "week") {
-      nextSchedule = { ...schedule, weekday: nextDow };
-    }
     const behind = (((nextIdx - referenceIdx) % stepDays) + stepDays) % stepDays;
     anchorDate = dayIndexToIsoDate(
       referenceIdx - (behind === 0 ? 0 : stepDays - behind),
@@ -613,22 +618,29 @@ export function parseWeekdayListFromImport(value: string): number[] | null {
   return weekdays.length > 0 ? weekdays : null;
 }
 
-export function parseMissionFrequency(value: string): ParsedMissionSchedule {
+const DEFAULT_IMPORT_SCHEDULE: ParsedMissionSchedule = {
+  frequency: "week",
+  weekdays: null,
+  weekday: 0,
+  intervalCount: null,
+  intervalUnit: null,
+};
+
+/**
+ * Schedule for an import frequency value. An empty value defaults to weekly;
+ * a non-empty value that is not recognised returns null so the import rejects
+ * the row instead of silently scheduling it weekly.
+ */
+export function tryParseMissionFrequency(
+  value: string,
+): ParsedMissionSchedule | null {
   const { base, weekdaySuffix } = splitFrequencyValue(value);
   const normalized = normalizeLookup(base);
   const parsedWeekdays = weekdaySuffix
     ? parseWeekdayListFromImport(weekdaySuffix)
     : null;
 
-  if (!normalized) {
-    return {
-      frequency: "week",
-      weekdays: null,
-      weekday: 0,
-      intervalCount: null,
-      intervalUnit: null,
-    };
-  }
+  if (!normalized) return { ...DEFAULT_IMPORT_SCHEDULE };
 
   if (
     normalized === "daily" ||
@@ -690,6 +702,27 @@ export function parseMissionFrequency(value: string): ParsedMissionSchedule {
     };
   }
 
+  const biWeekly =
+    normalized === "דו-שבועית" ||
+    normalized === "דו שבועית" ||
+    normalized === "דו-שבועי" ||
+    normalized === "דו שבועי" ||
+    normalized === "biweekly" ||
+    normalized === "bi-weekly" ||
+    normalized === "fortnightly";
+  if (biWeekly) {
+    // Stored like the app's own bi-weekly missions: every 14 days. A custom
+    // schedule has no weekday (mission_schedules_shape_check); the day comes
+    // from created_at, which applyNextRunToSchedule phases to the next run.
+    return {
+      frequency: "custom",
+      weekdays: null,
+      weekday: null,
+      intervalCount: 14,
+      intervalUnit: "day",
+    };
+  }
+
   const biMonthly =
     normalized === "דו-חודשית" ||
     normalized === "דו חודשית" ||
@@ -719,6 +752,27 @@ export function parseMissionFrequency(value: string): ParsedMissionSchedule {
     };
   }
 
+  const semiAnnual =
+    normalized === "חצי שנתית" ||
+    normalized === "חצי-שנתית" ||
+    normalized === "חצי שנתי" ||
+    normalized === "חצי-שנתי" ||
+    normalized === "semi-annual" ||
+    normalized === "semiannual" ||
+    normalized === "semi-annually" ||
+    normalized === "half-yearly";
+  if (semiAnnual) {
+    // Which two months: applyNextRunToSchedule phases created_at from the
+    // file's next run.
+    return {
+      frequency: "custom",
+      weekdays: null,
+      weekday: null,
+      intervalCount: 6,
+      intervalUnit: "month",
+    };
+  }
+
   const customMatch = normalized.match(
     /^(\d+)\s*(day|days|week|weeks|month|months|יום|ימים|שבוע|שבועות|חודש|חודשים)$/,
   );
@@ -731,24 +785,25 @@ export function parseMissionFrequency(value: string): ParsedMissionSchedule {
         : unitRaw.startsWith("month") || unitRaw.startsWith("חודש")
           ? "month"
           : "day";
+    // Weeks become days (as bi-weekly): custom schedules carry no weekday.
     return {
       frequency: "custom",
       weekdays: null,
-      weekday: unit === "week" ? 0 : null,
-      intervalCount: count,
-      intervalUnit: unit,
+      weekday: null,
+      intervalCount: unit === "week" ? count * 7 : count,
+      intervalUnit: unit === "week" ? "day" : unit,
     };
   }
 
-  return {
-    frequency: "week",
-    weekdays: null,
-    weekday: 0,
-    intervalCount: null,
-    intervalUnit: null,
-  };
+  return null;
 }
 
+export function parseMissionFrequency(value: string): ParsedMissionSchedule {
+  return tryParseMissionFrequency(value) ?? { ...DEFAULT_IMPORT_SCHEDULE };
+}
+
+/** Parse error message prefix; the rest is "<row>:<frequency value>". */
+export const UNKNOWN_FREQUENCY_PREFIX = "__unknown_frequency__:";
 /** Parse error message prefix; the rest lists the affected mission titles. */
 export const MISSING_LOCATION_ORDER_PREFIX = "__missing_location_order__:";
 /** Parse error message prefix; the rest lists the affected mission titles. */
@@ -958,6 +1013,15 @@ export function parseMissionsImportContent(
       });
     }
 
+    const frequency =
+      frequencyIndex >= 0 ? (cells[frequencyIndex] ?? "").trim() : "";
+    if (tryParseMissionFrequency(frequency) === null) {
+      return {
+        error: "invalidRow",
+        message: `${UNKNOWN_FREQUENCY_PREFIX}${rowNumber}:${frequency}`,
+      };
+    }
+
     const parsedRow: MissionImportRow = {
       rowNumber,
       skipHolidays,
@@ -965,8 +1029,7 @@ export function parseMissionsImportContent(
       externalId,
       groupKey,
       title,
-      frequency:
-        frequencyIndex >= 0 ? (cells[frequencyIndex] ?? "").trim() : "",
+      frequency,
       buildings:
         buildingsIndex >= 0
           ? splitList(cells[buildingsIndex] ?? "")

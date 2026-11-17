@@ -46,6 +46,8 @@ export const MISSION_EXPORT_SCRIPT = `/*
     TOOLTIP_SELECTOR: '#tooltip-root .Tooltip .Tooltip-after',
     TOOLTIP_TIMEOUT_MS: 2000,
     TOOLTIP_GONE_TIMEOUT_MS: 1000,
+    // "ריצה הבאה" can render a moment after the modal opens.
+    NEXT_RUN_TIMEOUT_MS: 4000,
   });
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -458,15 +460,62 @@ export const MISSION_EXPORT_SCRIPT = `/*
 
   // Visitt shows "ריצה הבאה" as D/M/YY (e.g. 15/11/26). Export it as
   // YYYY-MM-DD so the importer can't mistake it for a US M/D/YY date.
+  // The date is searched anywhere in the value (it may carry a time or extra
+  // text); "היום" / "מחר" are resolved against the local date.
   function toIsoDate(value) {
-    const match = value.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{2,4})$/);
-    if (!match) return value;
-    const day = Number(match[1]);
-    const month = Number(match[2]);
-    let year = Number(match[3]);
-    if (year < 100) year += 2000;
     const pad = (n) => String(n).padStart(2, '0');
-    return year + '-' + pad(month) + '-' + pad(day);
+    const iso = (date) =>
+      date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+    const match = value.match(/(\\d{1,2})[\\/.](\\d{1,2})[\\/.](\\d{2,4})/);
+    if (match) {
+      const day = Number(match[1]);
+      const month = Number(match[2]);
+      let year = Number(match[3]);
+      if (year < 100) year += 2000;
+      if (month < 1 || month > 12 || day < 1 || day > 31) return value;
+      return year + '-' + pad(month) + '-' + pad(day);
+    }
+    const today = new Date();
+    if (/היום|today/i.test(value)) return iso(today);
+    if (/מחר|tomorrow/i.test(value)) {
+      today.setDate(today.getDate() + 1);
+      return iso(today);
+    }
+    return value;
+  }
+
+  const NEXT_RUN_LABEL = 'ריצה הבאה';
+
+  // The label row's whole text minus the label, so it works whether the date
+  // is a bare text node, its own span, or inside the label span itself.
+  function readNextRunText(modal) {
+    const label = [...modal.querySelectorAll('span')].find((element) =>
+      clean(element.textContent).startsWith(NEXT_RUN_LABEL)
+    );
+    if (!label) return '';
+    const sibling = labelledValue(modal, clean(label.textContent));
+    if (sibling) return sibling;
+    const rowText = clean(label.parentElement?.textContent);
+    return clean(rowText.slice(rowText.indexOf(NEXT_RUN_LABEL) + NEXT_RUN_LABEL.length))
+      .replace(/^:\\s*/, '');
+  }
+
+  function readNextRun(modal) {
+    const date = toIsoDate(readNextRunText(modal));
+    return /^\\d{4}-\\d{2}-\\d{2}$/.test(date) ? date : '';
+  }
+
+  async function waitForNextRun(modal) {
+    if (extractPausedState(modal)) return;
+    try {
+      await waitFor(() => readNextRun(modal), CONFIG.NEXT_RUN_TIMEOUT_MS, 'ריצה הבאה');
+    } catch {
+      console.warn(
+        'לא נמצאה "ריצה הבאה" במשימה:',
+        clean(modal.querySelector('h2')?.textContent),
+        JSON.stringify(readNextRunText(modal))
+      );
+    }
   }
 
   // A paused assignment shows a HintBanner with the pause icon and the text
@@ -811,7 +860,7 @@ export const MISSION_EXPORT_SCRIPT = `/*
       skip_on_holidays: labelledValue(modal, 'התנהגות בחגים:') === 'מדולגת בחגים',
       is_paused: extractPausedState(modal),
       assigned_users: labelledValue(modal, 'משתמש משויך:'),
-      next_run: toIsoDate(labelledValue(modal, 'ריצה הבאה:')),
+      next_run: readNextRun(modal) || readNextRunText(modal),
     };
 
     // Every Visitt card containing its own "מיקומים" and "בדיקות" headings is
@@ -1140,6 +1189,8 @@ export const MISSION_EXPORT_SCRIPT = `/*
     };
 
     findCloseButton(modal);
+
+    await waitForNextRun(modal);
 
     await expandMultiSelectOptions(modal);
 

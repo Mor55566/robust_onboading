@@ -7,6 +7,7 @@ import {
   groupMissionChecklistItems,
   MISSING_LOCATION_ORDER_PREFIX,
   MISSING_NEXT_RUN_PREFIX,
+  UNKNOWN_FREQUENCY_PREFIX,
   missionChecklistSlots,
   parseMissionFrequency,
   parseMissionImportDate,
@@ -688,7 +689,74 @@ describe("next run → missions_cron schedule fields", () => {
       parseMissionFrequency("שבועית"), "2026-11-18", null,
     );
     assert.equal(schedule.weekday, 3);
+    // Open a full week like Visitt: closes Tuesday, the day before it reopens.
+    assert.equal(schedule.endWeekday, 2);
     assert.equal(anchorAt, null);
+  });
+
+  it("maps semi-annual to every 6 months phased from the next run", () => {
+    for (const value of ["חצי שנתית", "חצי-שנתית", "Semi-annual"]) {
+      const parsed = parseMissionFrequency(value);
+      assert.equal(parsed.frequency, "custom", value);
+      assert.equal(parsed.intervalCount, 6, value);
+      assert.equal(parsed.intervalUnit, "month", value);
+    }
+    // Visitt: next run 2027-01-01 (Jan + Jul). Created 2026-11-12 → anchor July.
+    const { schedule, anchorAt } = applyNextRunToSchedule(
+      parseMissionFrequency("חצי שנתית"), "2027-01-01", "2026-11-12T14:09:23Z",
+    );
+    assert.equal(schedule.frequency, "custom");
+    assert.equal(schedule.startDayOfMonth, 1);
+    assert.equal(schedule.weekday, null);
+    assert.equal(anchorAt?.slice(0, 7), "2026-07");
+  });
+
+  it("rejects an unrecognised frequency instead of defaulting to weekly", () => {
+    const parsed = parseMissionsImportContent(
+      "source_index,assignment_name,frequency,next_run\n1,בדיקה,חודשית,2026-12-01\n2,בדיקה אחרת,פעם בעשור,2026-12-01",
+      "export.csv",
+    );
+    assert.ok("error" in parsed);
+    assert.equal(parsed.error, "invalidRow");
+    assert.equal(parsed.message, `${UNKNOWN_FREQUENCY_PREFIX}3:פעם בעשור`);
+  });
+
+  it("every frequency fits mission_schedules_shape_check after the next run", () => {
+    const values = [
+      "", "יומית", "שבועית", "דו-שבועית", "חודשית", "דו-חודשית", "רבעונית",
+      "חצי שנתית", "שנתית", "3 שבועות", "2 weeks", "10 days", "4 חודשים",
+    ];
+    for (const value of values) {
+      const { schedule: s } = applyNextRunToSchedule(
+        parseMissionFrequency(value), "2026-11-25", "2026-11-12T14:09:23Z",
+      );
+      const none = (v: unknown) => v == null;
+      const ok =
+        (s.frequency === "day" && !none(s.weekdays) && none(s.weekday) && none(s.intervalCount) && none(s.intervalUnit)) ||
+        (s.frequency === "week" && !none(s.weekday) && none(s.weekdays) && none(s.intervalCount) && none(s.intervalUnit)) ||
+        ((s.frequency === "month" || s.frequency === "year") && none(s.weekdays) && none(s.weekday) && none(s.intervalCount) && none(s.intervalUnit)) ||
+        (s.frequency === "custom" && (s.intervalCount ?? 0) > 0 && !none(s.intervalUnit) && none(s.weekdays) && none(s.weekday));
+      assert.ok(ok, `${value}: ${JSON.stringify(s)}`);
+    }
+  });
+
+  it("maps bi-weekly to every 14 days phased to the next run", () => {
+    for (const value of ["דו-שבועית", "דו שבועית", "bi-weekly"]) {
+      const parsed = parseMissionFrequency(value);
+      assert.equal(parsed.frequency, "custom", value);
+      assert.equal(parsed.intervalCount, 14, value);
+      assert.equal(parsed.intervalUnit, "day", value);
+    }
+    // 2026-11-25 is a Wednesday.
+    const { schedule, anchorAt } = applyNextRunToSchedule(
+      parseMissionFrequency("דו-שבועית"), "2026-11-25", "2026-11-12T14:09:23Z",
+    );
+    // mission_schedules_shape_check: custom schedules carry no weekday.
+    assert.equal(schedule.weekday, null);
+    assert.ok(anchorAt);
+    assert.equal(new Date(anchorAt!).getUTCDay(), 3);
+    const days = (Date.parse("2026-11-25") - Date.parse(anchorAt!.slice(0, 10))) / 86_400_000;
+    assert.equal(days % 14, 0);
   });
 
   it("sets day of month (and month for yearly)", () => {

@@ -222,6 +222,8 @@ export const he: Dictionary = {
       "בקובץ חסר סדר המיקומים (location_order) במשימות עם כמה מיקומים: {missions}. סקריפט הייצוא לא הצליח לקרוא את שלב \"סדר\" ב-Visitt, כנראה בגלל שינוי ב-Visitt. אל תעלו את הקובץ — עדכנו את הסקריפט והריצו את הייצוא מחדש.",
     scheduledMissionsUploadMissingNextRun:
       "בקובץ חסרה הריצה הבאה (next_run) במשימות האלה, או שלא ניתן לקרוא אותה: {missions}. סקריפט הייצוא לא הצליח לקרוא את \"ריצה הבאה\" ב-Visitt, כנראה בגלל שינוי ב-Visitt. אל תעלו את הקובץ — עדכנו את הסקריפט והריצו את הייצוא מחדש.",
+    scheduledMissionsUploadUnknownFrequency:
+      "שורה {row}: התדירות \"{frequency}\" לא מוכרת. תדירויות נתמכות: יומית, שבועית, דו-שבועית, חודשית, דו-חודשית, רבעונית, חצי שנתית, שנתית, או \"כל N ימים/שבועות/חודשים\" (למשל \"3 שבועות\").",
     scheduledMissionsUploadInvalidRow: "בחלק מהשורות חסרים מזהה או שם.",
     scheduledMissionsUploadSuccess: "יובאו {count} משימות מתוזמנות",
     scheduledMissionsUploadSuccessDetailed:

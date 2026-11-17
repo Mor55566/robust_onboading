@@ -2891,6 +2891,7 @@ export async function importScheduledMissionsAction(
       // From the file's next run (see applyNextRunToSchedule); null = keep.
       const startDayOfMonth = row.schedule.startDayOfMonth ?? null;
       const startMonth = row.schedule.startMonth ?? null;
+      const endWeekday = row.schedule.endWeekday ?? null;
 
       if (existingMissionId) {
         queries.push(sql`
@@ -2925,6 +2926,7 @@ export async function importScheduledMissionsAction(
             interval_unit = ${intervalUnit},
             start_day_of_month = COALESCE(${startDayOfMonth}::smallint, start_day_of_month),
             start_month = COALESCE(${startMonth}::smallint, start_month),
+            end_weekday = COALESCE(${endWeekday}::smallint, end_weekday),
             skip_holidays = ${row.skipHolidays},
             paused_at = CASE
               WHEN ${row.isPaused}::boolean IS NULL THEN paused_at
@@ -2987,6 +2989,7 @@ export async function importScheduledMissionsAction(
             interval_unit,
             start_day_of_month,
             start_month,
+            end_weekday,
             skip_holidays,
             paused_at
           )
@@ -2999,6 +3002,7 @@ export async function importScheduledMissionsAction(
             ${intervalUnit},
             ${startDayOfMonth}::smallint,
             ${startMonth}::smallint,
+            ${endWeekday}::smallint,
             ${row.skipHolidays},
             CASE WHEN ${row.isPaused}::boolean THEN now() ELSE NULL END
           )
