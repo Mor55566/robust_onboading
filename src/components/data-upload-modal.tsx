@@ -164,7 +164,7 @@ export function DataUploadModal<T>({
         else setPreviewRows(previewResult);
       } catch (error) {
         console.error("DataUploadModal: failed to refresh preview", error);
-        if (!cancelled) setError(copy.invalid);
+        if (!cancelled) setError(withErrorDetail(copy.invalid, error));
       } finally {
         if (!cancelled) setIsReading(false);
       }
@@ -302,7 +302,7 @@ export function DataUploadModal<T>({
       // Server-action failures (e.g. a body over the host's size limit) land
       // here too, so keep the real cause visible for debugging.
       console.error("DataUploadModal: failed to read or preview file", error);
-      setError(copy.invalid);
+      setError(withErrorDetail(copy.invalid, error));
     } finally {
       setIsReading(false);
     }
@@ -742,4 +742,10 @@ function CloseIcon() {
       <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
     </svg>
   );
+}
+
+/** Keep an unexpected error's cause visible instead of only the generic text. */
+function withErrorDetail(message: string, error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error ?? "");
+  return detail ? `${message} (${detail})` : message;
 }

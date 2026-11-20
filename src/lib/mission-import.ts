@@ -477,29 +477,28 @@ export function applyNextRunToSchedule(
       ? schedule.intervalCount
       : 1;
 
-  switch (schedule.frequency) {
-    case "day":
-      return { schedule, anchorAt: null };
-    case "week":
-      return {
-        schedule: { ...schedule, weekday: nextDow, endWeekday: (nextDow + 6) % 7 },
-        anchorAt: null,
-      };
-    case "month":
-      return {
-        schedule: { ...schedule, startDayOfMonth: nextDay },
-        anchorAt: null,
-      };
-    case "year":
-      return {
-        schedule: { ...schedule, startDayOfMonth: nextDay, startMonth: nextMonth },
-        anchorAt: null,
-      };
-    case "custom":
-      break;
-    default:
-      return { schedule, anchorAt: null };
+  // Plain ifs, not a switch with `case "custom": break;`: Turbopack's minifier
+  // (Next 16.2) dropped everything after that switch in production builds, so
+  // this returned undefined for every "every N ..." schedule.
+  if (schedule.frequency === "week") {
+    return {
+      schedule: { ...schedule, weekday: nextDow, endWeekday: (nextDow + 6) % 7 },
+      anchorAt: null,
+    };
   }
+  if (schedule.frequency === "month") {
+    return {
+      schedule: { ...schedule, startDayOfMonth: nextDay },
+      anchorAt: null,
+    };
+  }
+  if (schedule.frequency === "year") {
+    return {
+      schedule: { ...schedule, startDayOfMonth: nextDay, startMonth: nextMonth },
+      anchorAt: null,
+    };
+  }
+  if (schedule.frequency !== "custom") return { schedule, anchorAt: null };
 
   const reference = createdAt ? new Date(createdAt) : now;
   const referenceDate = Number.isNaN(reference.getTime())

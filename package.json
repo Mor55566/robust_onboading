@@ -3,12 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/exclude-from-icloud.mjs",
     "dev": "next dev -p 3100",
+    "prebuild": "node scripts/exclude-from-icloud.mjs",
     "build": "next build",
-    "start": "next start",
+    "prestart": "node scripts/exclude-from-icloud.mjs",
+    "start": "next start -p 3100",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/**/*.test.ts",
+    "postinstall": "node scripts/exclude-from-icloud.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

@@ -1,5 +1,6 @@
 "use server";
 
+import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
@@ -226,6 +227,23 @@ export type ScheduledCallPreviewRow = {
 };
 
 export async function previewScheduledCallImportAction(
+  complexId: string,
+  rows: ScheduledCallImportRow[],
+): Promise<{ error?: string; rows?: ScheduledCallPreviewRow[] }> {
+  // Next masks thrown errors in production, and the upload modal would show a
+  // thrown error as "missing columns"; return the real cause instead.
+  try {
+    return await previewScheduledCallImport(complexId, rows);
+  } catch (error) {
+    unstable_rethrow(error);
+    console.error("previewScheduledCallImportAction failed", error);
+    const dict = await getDictionary();
+    const detail = error instanceof Error ? error.message : String(error);
+    return { error: `${dict.superAdmin.scheduledCallsUploadFailed} (${detail})` };
+  }
+}
+
+async function previewScheduledCallImport(
   complexId: string,
   rows: ScheduledCallImportRow[],
 ): Promise<{ error?: string; rows?: ScheduledCallPreviewRow[] }> {
