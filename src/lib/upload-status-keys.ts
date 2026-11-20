@@ -18,6 +18,9 @@ export const UPLOAD_STATUS_KEYS = [
   "users",
   "tasks",
   "automations",
+  // Optional: not every complex has scheduled calls, so it isn't part of the
+  // calls tab's "done" (SECTION_UPLOAD_KEYS).
+  "scheduledCalls",
 ] as const;
 
 export type UploadStatusKey = (typeof UPLOAD_STATUS_KEYS)[number];

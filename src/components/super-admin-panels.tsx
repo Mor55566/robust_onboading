@@ -40,6 +40,17 @@ import {
   type AutomationImportRow,
 } from "@/lib/automation-import";
 import { AUTOMATION_EXPORT_SCRIPT } from "@/lib/automation-export-script";
+import {
+  importScheduledCallsAction,
+  previewScheduledCallImportAction,
+} from "@/app/actions/scheduled-calls";
+import {
+  buildScheduledCallsCsvTemplate,
+  buildScheduledCallsExcelTemplate,
+  parseScheduledCallsImportContent,
+  UNKNOWN_CALL_SCHEDULE_PREFIX,
+  type ScheduledCallImportRow,
+} from "@/lib/scheduled-call-import";
 
 export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
   const { complexId, checkBuildingNames, guardDirectoryReady, uploadStatus, refreshUploadStatus } =
@@ -47,6 +58,7 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [automationsUploadOpen, setAutomationsUploadOpen] = useState(false);
   const [automationsGuideOpen, setAutomationsGuideOpen] = useState(false);
+  const [scheduledCallsUploadOpen, setScheduledCallsUploadOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [message, setMessage] = useState<{
     type: "success" | "error";
@@ -234,6 +246,67 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
     void refreshUploadStatus();
   }
 
+  async function previewScheduledCallRows(
+    rows: ScheduledCallImportRow[],
+  ): Promise<ImportPreviewRow[] | { error: string }> {
+    const result = await previewScheduledCallImportAction(complexId, rows);
+    if (result.error || !result.rows) {
+      return { error: result.error ?? dict.superAdmin.scheduledCallsUploadFailed };
+    }
+    const review = new Map(result.rows.map((row) => [row.rowNumber, row]));
+    return rows.map((row) => {
+      const rowReview = review.get(row.rowNumber);
+      const warnings = [
+        ...(rowReview?.warnings ?? []),
+        ...(row.resident ? [dict.superAdmin.scheduledCallsResidentIgnored] : []),
+      ];
+      return {
+        key: `scheduled-call-${row.rowNumber}`,
+        label: row.description.slice(0, 80),
+        detail:
+          rowReview?.error ??
+          ([
+            row.frequency,
+            row.location,
+            row.nextRun ? row.nextRun.split("-").reverse().join("/") : null,
+            rowReview?.existing ? dict.superAdmin.scheduledCallsPreviewExisting : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined),
+        action: rowReview?.error
+          ? ("error" as const)
+          : rowReview?.existing
+            ? ("update" as const)
+            : ("create" as const),
+        warnings: warnings.length > 0 ? warnings : undefined,
+      };
+    });
+  }
+
+  async function handleScheduledCallsImport(rows: ScheduledCallImportRow[]) {
+    setMessage(null);
+    if (!complexId) return { error: dict.admin.complexNotFound };
+    const result = await importScheduledCallsAction(complexId, rows);
+    if (result.error) return { error: result.error };
+    void refreshUploadStatus();
+    const created = result.created ?? 0;
+    const updated = result.updated ?? 0;
+    if (result.failures && result.failures.length > 0) {
+      return {
+        failures: result.failures.map((failure) => ({
+          rowNumber: failure.rowNumber,
+          label: failure.externalId ?? undefined,
+          error: failure.error,
+        })),
+        succeeded: created + updated,
+      };
+    }
+    setMessage({
+      type: "success",
+      text: t(dict.superAdmin.scheduledCallsUploadSuccess, { created, updated }),
+    });
+  }
+
   return (
     <div className="space-y-4">
       <UploadMessage message={message} />
@@ -260,6 +333,16 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         stepNumber={3}
         guideLabel={dict.superAdmin.fileTagsImportGuideButton}
         onGuide={() => setAutomationsGuideOpen(true)}
+      />
+
+      <UploadCard
+        title={dict.superAdmin.scheduledCallsUploadTitle}
+        subtitle={dict.superAdmin.scheduledCallsUploadSubtitle}
+        buttonLabel={dict.admin.uploadData}
+        onOpen={() => setScheduledCallsUploadOpen(true)}
+        disabled={!complexId}
+        done={complexId ? uploadStatus?.scheduledCalls : undefined}
+        stepNumber={4}
       />
 
       <section className="surface-card space-y-4 p-5">
@@ -340,6 +423,50 @@ export function SuperAdminPanels({ dict }: { dict: Dictionary }) {
         previewAsync={previewAutomationRows}
         onClose={() => setAutomationsUploadOpen(false)}
         onImport={handleAutomationsImport}
+      />
+      <DataUploadModal
+        open={scheduledCallsUploadOpen}
+        dict={dict}
+        copy={{
+          title: dict.superAdmin.scheduledCallsUploadTitle,
+          subtitle: dict.superAdmin.scheduledCallsUploadSubtitle,
+          empty: dict.superAdmin.scheduledCallsUploadEmpty,
+          invalid: dict.superAdmin.scheduledCallsUploadInvalid,
+          invalidRow: dict.superAdmin.scheduledCallsUploadInvalidRow,
+        }}
+        csvFilename="scheduled-calls-template.csv"
+        excelFilename="scheduled-calls-template.xls"
+        buildCsv={buildScheduledCallsCsvTemplate}
+        buildExcel={buildScheduledCallsExcelTemplate}
+        parse={(content, fileName) => {
+          const parsed = parseScheduledCallsImportContent(content, fileName);
+          if ("error" in parsed && parsed.message?.startsWith(UNKNOWN_CALL_SCHEDULE_PREFIX)) {
+            const rest = parsed.message.slice(UNKNOWN_CALL_SCHEDULE_PREFIX.length);
+            const separator = rest.indexOf(":");
+            return {
+              error: parsed.error,
+              message: t(dict.superAdmin.uploadRowError, {
+                row: rest.slice(0, separator),
+                message: t(dict.superAdmin.scheduledCallsUnknownSchedule, {
+                  value: rest.slice(separator + 1),
+                }),
+              }),
+            };
+          }
+          if ("error" in parsed && parsed.message?.startsWith("__row__:")) {
+            return {
+              error: parsed.error,
+              message: t(dict.superAdmin.uploadRowError, {
+                row: parsed.message.slice("__row__:".length),
+                message: dict.superAdmin.scheduledCallsUploadInvalidRow,
+              }),
+            };
+          }
+          return parsed;
+        }}
+        previewAsync={previewScheduledCallRows}
+        onClose={() => setScheduledCallsUploadOpen(false)}
+        onImport={handleScheduledCallsImport}
       />
       <DevtoolsScriptGuideModal
         open={automationsGuideOpen}

@@ -82,7 +82,12 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
         EXISTS (
           SELECT 1 FROM automation_rules
           WHERE complex_id = ${complexId}
-        ) AS automations
+        ) AS automations,
+        EXISTS (
+          SELECT 1 FROM tasks t
+          JOIN buildings b ON b.id = t.building_id
+          WHERE b.complex_id = ${complexId} AND t.type = 'template-call' AND t.is_hidden = false
+        ) AS scheduled_calls
     `,
     residentSql`
       SELECT EXISTS (
@@ -126,5 +131,6 @@ export async function getUploadStatus(complexId: string): Promise<UploadStatus> 
     users: Boolean(user?.users),
     tasks: Boolean(main?.tasks),
     automations: Boolean(main?.automations),
+    scheduledCalls: Boolean(main?.scheduled_calls),
   };
 }
