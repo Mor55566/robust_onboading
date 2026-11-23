@@ -10,7 +10,7 @@ import {
 export type AutomationImportRow = {
   rowNumber: number;
   sourceIndex: string;
-  triggerType: "task_opened" | "task_not_completed_for" | "task_completed";
+  triggerType: "task_opened" | "task_not_opened_for" | "task_not_answered_for" | "task_not_completed_for" | "task_completed";
   priorities: Array<"low" | "medium" | "high" | "critical">;
   buildingNames: string[];
   categoryNames: string[];
@@ -50,8 +50,13 @@ export type AutomationImportResolution =
 const HEADERS = [
   "index", "event", "trigger_type", "priorities", "buildings", "categories",
   "floors", "areas", "equipment", "action_type", "users", "rule_preview",
-  "action_preview", "hidden_values", "needs_review",
+  "action_preview", "hidden_values", "needs_review", "delay",
 ] as const;
+
+// Triggers that fire after a delay ("not seen/answered/completed for X").
+const DELAYED_TRIGGERS = new Set<AutomationImportRow["triggerType"]>([
+  "task_not_opened_for", "task_not_answered_for", "task_not_completed_for",
+]);
 
 const SAMPLE = [
   "1", "נפתחת קריאה", "נפתחת קריאה", "כל עדיפות", "בניין A",
@@ -97,6 +102,8 @@ function parseTrigger(value: string): AutomationImportRow["triggerType"] | null 
   if (normalized.includes("נפתחת") || normalized === "task opened" || normalized === "task_opened") return "task_opened";
   if (normalized.includes("הושלמה") || normalized.includes("הושלם") || normalized === "task completed" || normalized === "task_completed") return "task_completed";
   if (normalized.includes("לא הושל") || normalized === "task_not_completed_for") return "task_not_completed_for";
+  if (normalized.includes("לא נראת") || normalized.includes("לא נפתח") || normalized === "task_not_opened_for") return "task_not_opened_for";
+  if (normalized.includes("לא נענ") || normalized === "task_not_answered_for") return "task_not_answered_for";
   return null;
 }
 
@@ -155,11 +162,18 @@ export function parseAutomationsImportContent(
     const get = (key: typeof HEADERS[number]) => indexes[key] >= 0 ? (cells[indexes[key]] ?? "").trim() : "";
     const triggerType = parseTrigger(get("trigger_type"));
     const actionType = parseAction(get("action_type"));
-    if (!triggerType || !actionType || triggerType === "task_not_completed_for") {
+    if (!triggerType || !actionType) {
       return { error: "invalidRow", message: `__row__:${i + 1}` };
     }
-    const duration = actionType === "set_due_at" ? parseDuration(get("action_preview")) : null;
+    const isDelayed = DELAYED_TRIGGERS.has(triggerType);
+    const duration = actionType === "set_due_at"
+      ? parseDuration(get("action_preview"))
+      : isDelayed ? parseDuration(get("delay")) : null;
     if (actionType === "set_due_at" && (!duration || triggerType !== "task_opened")) {
+      return { error: "invalidRow", message: `__row__:${i + 1}` };
+    }
+    // Delayed triggers need a delay and can only notify (automation_rules_notify_only_check).
+    if (isDelayed && (!duration || actionType !== "notify_users")) {
       return { error: "invalidRow", message: `__row__:${i + 1}` };
     }
 

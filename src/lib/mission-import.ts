@@ -634,7 +634,9 @@ export function tryParseMissionFrequency(
   value: string,
 ): ParsedMissionSchedule | null {
   const { base, weekdaySuffix } = splitFrequencyValue(value);
-  const normalized = normalizeLookup(base);
+  // Visitt also writes "כל 6 חודשים (התאמה אישית)" ("every ..."); the
+  // parenthetical is dropped by splitFrequencyValue (not weekdays).
+  const normalized = normalizeLookup(base).replace(/^(?:כל|every)\s+/, "");
   const parsedWeekdays = weekdaySuffix
     ? parseWeekdayListFromImport(weekdaySuffix)
     : null;

@@ -3,6 +3,21 @@ import { describe, it } from "node:test";
 import { parseAutomationsImportContent, resolveAutomationImportRows } from "./automation-import";
 
 describe("automation CSV import", () => {
+  it("imports 'not seen for' triggers with a delay column", () => {
+    const csv = [
+      "index,trigger_type,action_type,users,rule_preview,action_preview,needs_review,delay",
+      "6,הקריאה לא נראתה במשך,משתמשים שיותראו,עדן אבנעים,,עדן אבנעים,no,1 יום",
+      "7,הקריאה לא נראתה במשך,משתמשים שיותראו,עדן אבנעים,,עדן אבנעים,no,",
+    ].join("\n");
+    const ok = parseAutomationsImportContent(csv.split("\n").slice(0, 2).join("\n"), "automations.csv");
+    assert.ok(!("error" in ok), JSON.stringify(ok));
+    assert.equal(ok.rows[0]?.triggerType, "task_not_opened_for");
+    assert.equal(ok.rows[0]?.delayValue, 1);
+    assert.equal(ok.rows[0]?.delayUnit, "day");
+    const missing = parseAutomationsImportContent(csv, "automations.csv");
+    assert.ok("error" in missing && missing.error === "invalidRow");
+  });
+
   it("parses > hierarchy and uses action_preview for exported users", () => {
     const csv = [
       "index,trigger_type,priorities,buildings,categories,action_type,users,rule_preview,action_preview,hidden_values,needs_review",

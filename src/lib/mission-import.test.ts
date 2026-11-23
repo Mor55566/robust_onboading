@@ -14,6 +14,7 @@ import {
   parseMissionNextRun,
   parseMissionsImportContent,
   resolveMissionImportRows,
+  tryParseMissionFrequency,
 } from "./mission-import";
 
 describe("scheduled missions CSV import", () => {
@@ -709,6 +710,17 @@ describe("next run → missions_cron schedule fields", () => {
     assert.equal(schedule.startDayOfMonth, 1);
     assert.equal(schedule.weekday, null);
     assert.equal(anchorAt?.slice(0, 7), "2026-07");
+  });
+
+  it("reads Visitt's \"כל N ...\" frequencies with a custom-schedule note", () => {
+    const sixMonths = tryParseMissionFrequency("כל 6 חודשים (התאמה אישית)");
+    assert.equal(sixMonths?.frequency, "custom");
+    assert.equal(sixMonths?.intervalCount, 6);
+    assert.equal(sixMonths?.intervalUnit, "month");
+    const threeWeeks = tryParseMissionFrequency("כל 3 שבועות");
+    assert.equal(threeWeeks?.intervalCount, 21);
+    assert.equal(threeWeeks?.intervalUnit, "day");
+    assert.equal(tryParseMissionFrequency("כל חודש")?.frequency, "month");
   });
 
   it("rejects an unrecognised frequency instead of defaulting to weekly", () => {
