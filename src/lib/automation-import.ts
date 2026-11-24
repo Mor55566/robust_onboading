@@ -85,7 +85,8 @@ function splitComma(value: string) {
 }
 
 function stripCount(value: string) {
-  return value.replace(/\+\d+/g, "").replace(/\s+/g, " ").trim();
+  // Strip only a trailing "+N" overflow badge (e.g. "Name +3"), not a "+" inside a name like "O-Tech 1+2 Parking".
+  return value.replace(/\s*\+\d+\s*$/, "").replace(/\s+/g, " ").trim();
 }
 
 function unique(values: string[]) {
