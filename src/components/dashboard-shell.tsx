@@ -12,7 +12,8 @@ export type OnboardingSection =
   | "scheduled-missions"
   | "documents"
   | "residents"
-  | "users";
+  | "users"
+  | "user-access";
 
 function navItems(dict: Dictionary): { key: OnboardingSection; href: string; label: string }[] {
   return [
@@ -22,6 +23,7 @@ function navItems(dict: Dictionary): { key: OnboardingSection; href: string; lab
     { key: "scheduled-missions", href: "/scheduled-missions", label: dict.profile.tabScheduledMissions },
     { key: "residents", href: "/residents", label: dict.profile.tabResidents },
     { key: "documents", href: "/documents", label: dict.profile.tabFiles },
+    { key: "user-access", href: "/user-access", label: dict.userAccess.nav },
   ];
 }
 

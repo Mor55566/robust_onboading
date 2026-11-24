@@ -12,6 +12,7 @@ import { requireUser } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { seedDefaultAgentsForComplex } from "@/lib/agents-db";
 import { seedDefaultCategoriesForComplex } from "@/lib/default-categories";
+import { seedFormsForComplex } from "@/lib/forms-seed";
 import { grantChainUsersAccessToNewComplex } from "@/lib/chain-permissions";
 import { getDictionary } from "@/i18n/get-dictionary";
 
@@ -21,6 +22,7 @@ export type CreateComplexState = {
   building?: { id: string; name: string };
   seededAgents?: number;
   seededCategories?: number;
+  seededForms?: number;
 };
 
 const createComplexSchema = z.object({
@@ -119,10 +121,20 @@ export async function createComplexAction(
     console.error("seedDefaultCategoriesForComplex failed:", error);
   }
 
+  // Forms are copied from the template complex by robust_form, best-effort
+  // like the other seeds: a failure never undoes the new complex.
+  let seededForms = 0;
+  try {
+    seededForms = await seedFormsForComplex(complexId, complexName, user.id);
+  } catch (error) {
+    console.error("seedFormsForComplex failed:", error);
+  }
+
   return {
     complex: { id: complexId, name: complexName },
     building,
     seededAgents,
     seededCategories,
+    seededForms,
   };
 }

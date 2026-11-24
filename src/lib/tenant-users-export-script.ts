@@ -8,6 +8,7 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
   const TABLE = 'table[data-test-id="tenant-contacts-table"]';
   const EMPTY = '[data-test-id="tenant-contacts-empty-state"]';
   const ROW = 'tbody tr[data-test-id="tenant-contact-row"]';
+  const COUNT = '[data-test-id="tenant-contacts-count"]';
 
   const text = el =>
     (el?.textContent ?? '').replace(/\\s+/g, ' ').trim();
@@ -36,34 +37,121 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
     return elements.length === 1 ? elements[0] : null;
   }
 
-  function readTenants() {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  function getGrid() {
     const grid = one(GRID);
 
     if (!grid) {
       throw new Error('לא נמצאה טבלת דיירים יחידה.');
     }
 
-    const rows = [...grid.querySelectorAll('[role="row"]')]
-      .filter(row => row.querySelector('[role="gridcell"]'));
+    return grid;
+  }
 
-    const countAttribute = grid.getAttribute('aria-rowcount');
-    const expected = Number(countAttribute) - 1;
+  // מספר הדיירים הצפוי לפי aria-rowcount (כולל שורת כותרת), או null אם לא ידוע.
+  function expectedCount(grid) {
+    const value = Number(grid.getAttribute('aria-rowcount'));
+    return Number.isInteger(value) && value > 0 ? value - 1 : null;
+  }
 
-    if (
-      countAttribute === null ||
-      !Number.isInteger(expected) ||
-      expected !== rows.length
-    ) {
-      throw new Error(
-        'לא כל הדיירים נמצאים כרגע בטבלה. נדרש טיפול בגלילה או בעימוד.'
-      );
+  function isScrollable(el) {
+    if (!el || el.scrollHeight <= el.clientHeight + 1) return false;
+    const { overflowY } = getComputedStyle(el);
+    return overflowY === 'auto' || overflowY === 'scroll' ||
+      overflowY === 'overlay';
+  }
+
+  // הטבלה וירטואלית: רק השורות הנראות קיימות ב-DOM, לכן צריך לגלול.
+  function findScroller(grid) {
+    if (isScrollable(grid)) return grid;
+
+    const inner = [...grid.querySelectorAll('*')].find(isScrollable);
+    if (inner) return inner;
+
+    for (let el = grid.parentElement; el; el = el.parentElement) {
+      if (isScrollable(el)) return el;
     }
 
-    const names = rows.map(row =>
-      text(row.querySelector(
-        '[role="gridcell"][aria-colindex="2"]'
-      ))
-    );
+    return document.scrollingElement || document.documentElement;
+  }
+
+  // שורות הדיירים שמוצגות כרגע: [{ key, name, cell }]
+  function visibleRows(grid) {
+    return [...grid.querySelectorAll('[role="row"]')]
+      .map(row => {
+        const cell = row.querySelector(
+          '[role="gridcell"][aria-colindex="2"]'
+        );
+        if (!cell) return null;
+        const name = text(cell);
+        const index = Number(row.getAttribute('aria-rowindex'));
+        return {
+          key: Number.isInteger(index) ? index : name,
+          name,
+          cell
+        };
+      })
+      .filter(Boolean);
+  }
+
+  async function scrollTo(scroller, top) {
+    scroller.scrollTop = top;
+    scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+    await sleep(350);
+  }
+
+  // גולל את הטבלה מההתחלה ועד הסוף ומפעיל את visit על כל מסך.
+  // אם visit מחזיר ערך — עוצר ומחזיר אותו.
+  async function sweep(grid, visit) {
+    const scroller = findScroller(grid);
+    await scrollTo(scroller, 0);
+
+    let stalled = 0;
+
+    while (true) {
+      const found = visit(visibleRows(grid));
+      if (found) return found;
+
+      const before = scroller.scrollTop;
+      const step = Math.max(100, Math.floor(scroller.clientHeight * 0.7));
+      await scrollTo(scroller, before + step);
+
+      if (scroller.scrollTop <= before + 1) {
+        // הגענו לסוף; ייתכן שנטענים עוד נתונים — ממתינים פעמיים.
+        if (++stalled >= 3) {
+          return visit(visibleRows(grid)) || null;
+        }
+        await sleep(700);
+      } else {
+        stalled = 0;
+      }
+    }
+  }
+
+  async function readTenants() {
+    const grid = getGrid();
+    const byKey = new Map();
+
+    await sweep(grid, rows => {
+      for (const row of rows) byKey.set(row.key, row.name);
+      return null;
+    });
+
+    const keys = [...byKey.keys()];
+    if (keys.every(key => typeof key === 'number')) {
+      keys.sort((a, b) => a - b);
+    }
+    const names = keys.map(key => byKey.get(key));
+
+    const expected = expectedCount(getGrid());
+
+    if (expected !== null && expected !== names.length) {
+      throw new Error(
+        \`לאחר גלילה נמצאו \${names.length} מתוך \${expected} דיירים. \` +
+        'ייתכן שהטבלה מחולקת לעמודים — יש להציג את כל הדיירים בעמוד אחד.'
+      );
+    }
 
     if (
       names.some(name => !name) ||
@@ -73,6 +161,19 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
     }
 
     return names;
+  }
+
+  async function findTenantCell(tenant) {
+    const grid = getGrid();
+    const match = rows => {
+      const hits = rows.filter(row => row.name === tenant);
+      return hits.length === 1 ? hits[0].cell : null;
+    };
+
+    const visible = match(visibleRows(grid));
+    if (visible) return visible;
+
+    return await sweep(grid, match);
   }
 
   function progress(state) {
@@ -124,10 +225,15 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
       return current?.getAttribute('aria-selected') === 'true';
     }, 'אישור שלשונית אנשי קשר נפתחה');
 
+    // דייר בלי אנשי קשר מציג רק "0 תוצאות" בלי טבלה. כדי לא לפספס
+    // נתונים שעוד נטענים, מצב ריק נחשב סופי רק אחרי שנשאר יציב שנייה.
+    let emptySince = null;
+
     return await waitFor(() => {
       const currentTab = one(TAB);
 
       if (currentTab?.getAttribute('aria-selected') !== 'true') {
+        emptySince = null;
         return null;
       }
 
@@ -141,20 +247,28 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
         return null;
       }
 
-      const empty = one(EMPTY, panel);
       const table = one(TABLE, panel);
       const rows = table ? [...table.querySelectorAll(ROW)] : [];
+      const countMatch = text(one(COUNT, panel)).match(/\\d+/);
+      const count = countMatch ? Number(countMatch[0]) : null;
+      const empty = Boolean(one(EMPTY, panel)) || count === 0;
 
       if (empty && rows.length) {
         throw new Error('נמצאו גם אנשי קשר וגם מצב ריק. האיסוף נעצר.');
       }
 
-      if (empty) {
-        return { empty: true, rows: [] };
+      if (rows.length) {
+        emptySince = null;
+        return { empty: false, rows };
       }
 
-      if (rows.length) {
-        return { empty: false, rows };
+      if (empty) {
+        emptySince ??= Date.now();
+        if (Date.now() - emptySince >= 1000) {
+          return { empty: true, rows: [] };
+        }
+      } else {
+        emptySince = null;
       }
 
       return null;
@@ -225,7 +339,8 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
   }
 
   try {
-    const tenantNames = readTenants();
+    console.log('🔎 גולל את רשימת הדיירים כדי לאסוף את כולם...');
+    const tenantNames = await readTenants();
 
     // כל הרצה מתחילה מחדש, ללא שימוש בסריקה הקודמת.
     sessionStorage.removeItem(KEY);
@@ -245,12 +360,9 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
     progress(state);
 
     for (const tenant of state.tenants) {
-      const matches = [...document.querySelectorAll(
-        \`\${GRID} [role="row"] \` +
-        '[role="gridcell"][aria-colindex="2"]'
-      )].filter(cell => text(cell) === tenant);
+      const cell = await findTenantCell(tenant);
 
-      if (matches.length !== 1) {
+      if (!cell) {
         throw new Error(\`לא נמצאה התאמה יחידה לדייר: \${tenant}\`);
       }
 
@@ -259,7 +371,9 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
         \`\${state.completed.length + 1} מתוך \${state.tenants.length}\`
       );
 
-      matches[0].click();
+      cell.scrollIntoView({ block: 'center' });
+      await sleep(150);
+      cell.click();
 
       const result = await openContacts();
 
@@ -308,9 +422,8 @@ export const TENANT_USERS_EXPORT_SCRIPT = `(async () => {
       progress(state);
       await returnToTenants();
 
-      if (
-        JSON.stringify(readTenants()) !== JSON.stringify(state.tenants)
-      ) {
+      const expected = expectedCount(getGrid());
+      if (expected !== null && expected !== state.tenants.length) {
         throw new Error('רשימת הדיירים השתנתה במהלך האיסוף.');
       }
     }
